@@ -631,6 +631,69 @@ def save_tariff_logic_version(doc_id: int, logic_item: dict) -> bool:
         logger.info("end of save_tariff_logic_version")
         session.close()
 
+def get_distinct_sc_codes():
+    """
+    Returns a list of distinct SC codes from the tariff_logic_version table.
+    """
+    logger.info("start of get_distinct_sc_codes")
+    session = get_session()
+    try:
+        rows = session.query(TariffLogicVersion.sc_code).distinct().all()
+        sc_codes = [r.sc_code for r in rows]
+        logger.info(f"SC codes found: {sc_codes}")
+        return sc_codes
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to fetch SC codes: {e}")
+        return []
+    finally:
+        logger.info("end of get_distinct_sc_codes")
+        session.close()
+def get_versions_for_sc(sc_code: str):
+    """
+    Returns all effective dates for a given SC, sorted descending.
+    """
+    logger.info(f"start of get_versions_for_sc sc={sc_code}")
+    session = get_session()
+    try:
+        rows = (
+            session.query(TariffLogicVersion.effective_date)
+            .filter_by(sc_code=sc_code)
+            .order_by(TariffLogicVersion.effective_date.desc())
+            .all()
+        )
+        versions = [r.effective_date.strftime("%Y-%m-%d") for r in rows]
+        logger.info(f"Versions for {sc_code}: {versions}")
+        return versions
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to fetch versions for sc={sc_code}: {e}")
+        return []
+    finally:
+        logger.info("end of get_versions_for_sc")
+        session.close()
+def get_logic_for_sc_version(sc_code: str, effective_date: str):
+    """
+    Returns logic_json for the given SC code + version date.
+    """
+    logger.info(f"start of get_logic_for_sc_version sc={sc_code} eff={effective_date}")
+    session = get_session()
+    try:
+        eff_date = dateparser.parse(effective_date).date()
+
+        row = (
+            session.query(TariffLogicVersion)
+            .filter_by(sc_code=sc_code, effective_date=eff_date)
+            .first()
+        )
+
+        return row.logic_json if row else None
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to fetch logic for sc={sc_code}: {e}")
+        return None
+    finally:
+        logger.info("end of get_logic_for_sc_version")
+        session.close()
+
+
 def fetch_logic_for_audit(sc_code: str, bill_date: Union[str, datetime.date]) -> Optional[dict]:
     """
     Time Machine lookup: find the logic active on bill_date for sc_code.

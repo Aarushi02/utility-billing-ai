@@ -1,0 +1,40 @@
+[
+  {
+    "sc_code": "SC1",
+    "description": "Residential and Farm Service",
+    "logic_steps": [
+      {
+        "step_name": "Customer Charge",
+        "charge_type": "fixed_fee",
+        "value": 16.21,
+        "period": "monthly"
+      },
+      {
+        "step_name": "Income Eligible Basic Service Credit",
+        "charge_type": "credit",
+        "value": 5.0,
+        "period": "monthly"
+      },
+      {
+        "step_name": "Energy Charge - Distribution Delivery",
+        "charge_type": "per_kwh",
+        "value": 0.04149,
+        "unit": "user.billed_kwh"
+      },
+      {
+        "step_name": "Competitive Transition Charge",
+        "charge_type": "per_kwh",
+        "value": 0.00697,
+        "unit": "user.billed_kwh"
+      }
+    ],
+    "minimum_charge": {
+      "value": 16.21,
+      "period": "monthly"
+    },
+    "metadata": {
+      "effective_date": "04/27/2009",
+      "filename": "2800929.pdf"
+    }
+  }
+]
