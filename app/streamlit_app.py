@@ -43,6 +43,7 @@ except:
     logger = logging.getLogger(__name__)
 
 import streamlit as st
+from app.components.home import check_authentication, render_login_page, logout
 
 # Initialize database on app startup
 @st.cache_resource
@@ -67,6 +68,13 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed",
 )
+
+# -----------------------------------------------------
+# AUTHENTICATION CHECK
+# -----------------------------------------------------
+if not check_authentication():
+    render_login_page()
+    st.stop()  # Stop execution if not authenticated
 
 # -----------------------------------------------------
 # CUSTOM CSS - LOAD FROM EXTERNAL FILE
@@ -95,6 +103,16 @@ except Exception as e:
     st.sidebar.write("Troy & Banks")
 
 st.sidebar.title("Troy & Banks – Utility Billing AI")
+
+# Show logged in user info
+if "username" in st.session_state:
+    st.sidebar.info(f"👤 Logged in as: **{st.session_state.username}**")
+
+# Logout button at the top of sidebar
+if st.sidebar.button("🚪 Logout", use_container_width=True, type="primary"):
+    logout()
+
+st.sidebar.markdown("---")
 
 # -----------------------------------------------------
 # NAVIGATION WITH ICONS
