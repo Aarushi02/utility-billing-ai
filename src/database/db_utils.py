@@ -693,6 +693,37 @@ def get_logic_for_sc_version(sc_code: str, effective_date: str):
         logger.info("end of get_logic_for_sc_version")
         session.close()
 
+def get_all_tariff_versions():
+    """
+    Fetch all rows from TariffLogicVersion table.
+    Returns a list of dicts with:
+      - sc_code
+      - effective_date (YYYY-MM-DD)
+      - logic_json
+      - tariff_document_id
+    """
+    logger.info("start of get_all_tariff_versions")
+    session = get_session()
+    try:
+        rows = session.query(TariffLogicVersion).all()
+        data = []
+        for r in rows:
+            data.append({
+                "sc_code": r.sc_code,
+                "effective_date": r.effective_date.strftime("%Y-%m-%d"),
+                "logic_json": r.logic_json,
+                "tariff_document_id": r.tariff_document_id
+            })
+        return data
+
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to fetch all tariff versions: {e}")
+        return []
+
+    finally:
+        logger.info("end of get_all_tariff_versions")
+        session.close()
+
 
 def fetch_logic_for_audit(sc_code: str, bill_date: Union[str, datetime.date]) -> Optional[dict]:
     """
