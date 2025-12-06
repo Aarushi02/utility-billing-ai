@@ -314,7 +314,7 @@ if __name__ == "__main__":
     # Example:
     #   ACCOUNT_ID = "1120031219"   # audit one account
     #   ACCOUNT_ID = None           # audit ALL accounts
-    ACCOUNT_ID = "1120031219"
+    ACCOUNT_ID = "dummy_account"  # Replace with real account or None
 
     # Tariff JSON from data/processed
     TARIFF_FILE = get_file_path("processed", "tariff_definitions.json")

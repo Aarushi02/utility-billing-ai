@@ -34,7 +34,7 @@ def _get_available_accounts() -> list[str]:
     Fetch all user_bills from DB and return unique bill_account values.
     """
     try:
-        df = fetch_user_bills(account_id=None)
+        df = fetch_user_bills(account_id=None)   
     except Exception as e:
         logger.error(f"Error fetching bills for account list: {e}")
         return []
@@ -75,6 +75,7 @@ def render_report_viewer():
     # 1. Account Selection
     # ---------------------------------------------------------
     accounts = _get_available_accounts()
+    #we have date in accounts
 
     if not accounts:
         st.warning("No account numbers found in user_bills.")
@@ -93,6 +94,7 @@ def render_report_viewer():
         st.info("Select an account and click **Run Audit for Selected Account**.")
         return
 
+    # check logis to know all account dates are in single year or multiple year
     # ---------------------------------------------------------
     # 2. Initialize BillAuditReporter
     # ---------------------------------------------------------
@@ -100,6 +102,8 @@ def render_report_viewer():
     tariff_file = get_file_path("processed", "tariff_definitions.json")
 
     reporter = BillAuditReporter(tariff_file)
+
+    #
 
     # ---------------------------------------------------------
     # 3. Run audit for the chosen account
