@@ -283,7 +283,7 @@ def process_bill(pdf_path: Path, document_id: int = None):
     df_out = df_out[DEST_COLS]
 
     # keep a human-readable timestamp column in the DataFrame if needed
-    df_out["Inserted At"] = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+    df_out["Inserted At"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     # Normalize and convert types before inserting into DB
     def _to_optional_float(val):
@@ -346,7 +346,7 @@ def process_bill(pdf_path: Path, document_id: int = None):
             "created_at": datetime.utcnow(),
         }
         try:
-            bill_account = insert_user_bill(record, document_id=document_id)
+            bill_account = insert_user_bill(record, raw_bill_document_id=document_id)
             if bill_account:
                 validated_accounts.add(bill_account)  # Track unique accounts for validation
             inserted += 1

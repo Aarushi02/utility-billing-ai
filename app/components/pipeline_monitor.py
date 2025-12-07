@@ -9,4 +9,4 @@ def render_pipeline_monitor():
     if df.empty:
         st.info("No pipeline runs logged.")
     else:
-        st.dataframe(df, use_container_width=True)
+        st.dataframe(df, width='stretch')

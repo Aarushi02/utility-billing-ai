@@ -246,7 +246,7 @@ def render_report_viewer():
     if "trace" in preview_df.columns:
         preview_df = preview_df.drop(columns=["trace"])
 
-    st.dataframe(preview_df, use_container_width=True)
+    st.dataframe(preview_df, width='stretch')
 
     # ---------------------------------------------------------
     # 6. Download as Excel

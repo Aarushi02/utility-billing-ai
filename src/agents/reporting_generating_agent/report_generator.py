@@ -326,7 +326,70 @@ class BillAuditReporter:
         results: List[Dict],
         account_id: Optional[str],
     ) -> str:
-        ...
-        # (keep your existing implementation unchanged)
-        ...
+        """
+        Format audit results into a text report.
+        """
+        if not results:
+            if account_id:
+                return f"No audit results generated for account_id={account_id}."
+            return "No audit results generated."
+
+        report_lines = []
+        report_lines.append("=" * 80)
+        report_lines.append("BILL AUDIT REPORT")
+        report_lines.append("=" * 80)
+        
+        if account_id:
+            report_lines.append(f"Account ID: {account_id}")
+        else:
+            report_lines.append("Account ID: ALL ACCOUNTS")
+        
+        report_lines.append(f"Generated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+        report_lines.append(f"Total Bills Audited: {len(results)}")
+        report_lines.append("=" * 80)
+        report_lines.append("")
+
+        # Summary statistics
+        total_variance = sum(r["variance"] for r in results)
+        high_variance_count = sum(1 for r in results if abs(r["variance"]) > 0.05)
+        error_count = sum(1 for r in results if r["status"] != "SUCCESS")
+
+        report_lines.append("SUMMARY:")
+        report_lines.append(f"  Total Variance: ${total_variance:.2f}")
+        report_lines.append(f"  High Variance Bills (>5%): {high_variance_count}")
+        report_lines.append(f"  Calculation Errors: {error_count}")
+        report_lines.append("")
+        report_lines.append("-" * 80)
+        report_lines.append("")
+
+        # Detailed results
+        report_lines.append("DETAILED RESULTS:")
+        report_lines.append("")
+
+        for idx, result in enumerate(results, 1):
+            bill_date = result.get("date")
+            date_str = bill_date.strftime("%Y-%m-%d") if pd.notna(bill_date) else "N/A"
+            
+            report_lines.append(f"Bill #{idx}:")
+            report_lines.append(f"  Date: {date_str}")
+            report_lines.append(f"  Service Class: {result.get('sc_code', 'N/A')}")
+            report_lines.append(f"  Account: {result.get('bill_account', 'N/A')}")
+            report_lines.append(f"  Actual Amount: ${result['actual']:.2f}")
+            report_lines.append(f"  Expected Amount: ${result['expected']:.2f}")
+            report_lines.append(f"  Variance: ${result['variance']:.2f}")
+            report_lines.append(f"  Status: {result['status']}")
+            
+            # Add trace information if available
+            if result.get("trace"):
+                report_lines.append("  Calculation Trace:")
+                for trace_item in result["trace"]:
+                    report_lines.append(f"    - {trace_item}")
+            
+            report_lines.append("")
+
+        report_lines.append("=" * 80)
+        report_lines.append("END OF REPORT")
+        report_lines.append("=" * 80)
+
+        return "\n".join(report_lines)
 

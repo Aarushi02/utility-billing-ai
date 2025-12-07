@@ -58,13 +58,22 @@ def render_file_uploader():
             file_path = Path(temp_path)
 
             # Log upload in DB
+            # metadata = {
+            #     "file_name": file.name,
+            #     "file_type": Path(file.name).suffix.lower(),
+            #     "upload_date": datetime.utcnow(),
+            #     "source": "User Upload (Bill)",
+            #     "status": "uploaded",
+            #     "s3_key": s3_key
+            # }
+            
             metadata = {
                 "file_name": file.name,
                 "file_type": Path(file.name).suffix.lower(),
                 "upload_date": datetime.utcnow(),
                 "source": "User Upload (Bill)",
                 "status": "uploaded",
-                "s3_key": s3_key
+                
             }
 
             try:
@@ -243,7 +252,6 @@ def render_file_uploader():
 
             if st.button("Upload More Tariff Files"):
                 st.session_state["tariff_results"] = []
-                st.session_state["tariff_uploader"] = None
                 st.rerun()
 
         # If uploading new files -> process them
@@ -263,55 +271,73 @@ def render_file_uploader():
                     file_path = Path(temp_path)
 
                     # ---------- LOG UPLOAD IN DB ----------
+                    # metadata = {
+                    #     "file_name": file.name,
+                    #     "file_type": Path(file.name).suffix.lower(),
+                    #     "upload_date": datetime.now(),
+                    #     "source": "User Upload (Tariff)",
+                    #     "status": "uploaded",
+                    #     "s3_key": s3_key
+                    # }
+
                     metadata = {
                         "file_name": file.name,
                         "file_type": Path(file.name).suffix.lower(),
                         "upload_date": datetime.now(),
                         "source": "User Upload (Tariff)",
                         "status": "uploaded",
-                        "s3_key": s3_key
+                       
                     }
-
                     try:
                         tariff_doc_id = insert_raw_bill_document(metadata)
                     except Exception as e:
                         st.error(f"Error logging tariff file {file.name}: {e}")
 
                     # ---------- FULL SCREEN OVERLAY ----------
-                    overlay = st.empty()
-                    overlay.markdown(f"""
+                    # Create a full-page modal overlay
+                    st.markdown("""
                         <style>
-                            .stApp {{ pointer-events:none; }}
-                            div[data-testid="stAppViewContainer"] > section {{ filter:blur(5px); }}
-                            section[data-testid="stSidebar"] {{ filter:blur(5px); pointer-events:none; }}
-                        </style>
-
-                        <div style='position:fixed; top:0; left:0; width:100vw; height:100vh;
-                                    background:rgba(0,0,0,0.7); z-index:9999;
-                                    display:flex; justify-content:center; align-items:center;'>
-                            <div style='background:white; padding:40px; border-radius:12px;
-                                        width:450px; text-align:center;'>
-                                <h2 style='color:#1f77b4;'>🔄 Processing Tariff</h2>
-                                <p style='font-size:18px; font-weight:600;'>{file.name}</p>
-                                <p style='color:#666;'>Extracting, grouping and analyzing tariff...</p>
-
-                                <div style='width:100%; height:6px; background:#e0e0e0; border-radius:4px; overflow:hidden;'>
-                                    <div style='width:50%; height:100%;
-                                        background:linear-gradient(90deg,#1f77b4,#4fc3f7);
-                                        animation:loading 1.5s ease-in-out infinite;'></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <style>
-                        @keyframes loading {{
-                            0% {{ transform:translateX(-100%); }}
-                            50% {{ transform:translateX(100%); }}
-                            100% {{ transform:translateX(-100%); }}
-                        }}
+                        .stApp {
+                            pointer-events: none;
+                        }
+                        div[data-testid="stAppViewContainer"] > section {
+                            filter: blur(5px);
+                        }
+                        section[data-testid="stSidebar"] {
+                            pointer-events: none;
+                            filter: blur(5px);
+                        }
                         </style>
                     """, unsafe_allow_html=True)
-
+                    
+                    processing_placeholder = st.empty()
+                    
+                    with processing_placeholder.container():
+                        st.markdown("""
+                            <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
+                                 background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px);
+                                 z-index: 9999; display: flex; align-items: center; justify-content: center;
+                                 pointer-events: all;'>
+                                <div style='background: white; padding: 40px; border-radius: 10px; 
+                                     text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'>
+                                    <h2 style='color: #1f77b4; margin-bottom: 20px;'>⚡ Processing Tariff Document</h2>
+                                    <p style='font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px;'>{}</p>
+                                    <p style='color: #666; margin-bottom: 20px;'>Extracting, grouping and analyzing tariff...</p>
+                                    <div style='width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden;'>
+                                        <div style='width: 50%; height: 100%; background: linear-gradient(90deg, #1f77b4, #4fc3f7); 
+                                             animation: loading 1.5s ease-in-out infinite;'></div>
+                                    </div>
+                                </div>
+                            </div>
+                            <style>
+                            @keyframes loading {{
+                                0% {{ transform: translateX(-100%); }}
+                                50% {{ transform: translateX(100%); }}
+                                100% {{ transform: translateX(-100%); }}
+                            }}
+                            </style>
+                        """.format(file.name), unsafe_allow_html=True)
+                    
                     # ---------- RUN PIPELINE ----------
                     from src.orchestrator.pipeline_runner import run_tariff_pipeline
                     results = run_tariff_pipeline(file_path, raw_bill_document_id=tariff_doc_id)
@@ -323,6 +349,23 @@ def render_file_uploader():
                     except:
                         pass
 
+                    # Clear the processing overlay and re-enable page
+                    processing_placeholder.empty()
+                    st.markdown("""
+                        <style>
+                        .stApp {
+                            pointer-events: auto;
+                        }
+                        div[data-testid="stAppViewContainer"] > section {
+                            filter: none;
+                        }
+                        section[data-testid="stSidebar"] {
+                            pointer-events: auto;
+                            filter: none;
+                        }
+                        </style>
+                    """, unsafe_allow_html=True)
+
                     # ---------- SAVE RESULTS ----------
                     st.session_state["tariff_results"].append({
                         "name": file.name,
@@ -330,9 +373,7 @@ def render_file_uploader():
                         "logic": results["final_logic"]
                     })
 
-                    # ---------- CLEAR OVERLAY + REFRESH ----------
-                    overlay.empty()
-                    st.session_state["tariff_uploader"] = None
+                    # ---------- REFRESH ----------
                     st.rerun()
 
                 except Exception as e:

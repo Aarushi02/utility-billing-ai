@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-PROJECT_ROOT = Path(__file__).resolve().parents[3]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.aws_app import file_exists_in_s3, get_s3_key
@@ -22,7 +22,12 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     if not step1.exists():
         raise FileNotFoundError(f"Missing: {step1}")
 
-    subprocess.run([sys.executable, str(step1), str(pdf_path)], check=True)
+    result = subprocess.run([sys.executable, str(step1), str(pdf_path)], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"❌ Step 1 failed with exit code {result.returncode}")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
+        raise RuntimeError(f"pagewise_text_extractor.py failed: {result.stderr}")
 
     # Check if output exists in S3 only
     s3_key_raw = get_s3_key("processed", "raw_extracted_tarif.json")
@@ -38,9 +43,20 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     if not step2.exists():
         raise FileNotFoundError(f"Missing: {step2}")
 
-    subprocess.run([sys.executable, str(step2)], check=True)
+    result = subprocess.run([sys.executable, str(step2)], capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"❌ Step 2 failed with exit code {result.returncode}")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
+        raise RuntimeError(f"group_extracted_raw_text.py failed: {result.stderr}")
 
-    # Note: step2 creates grouped_tariffs.json (already validated above)
+    # Check if output exists in S3
+    s3_key_grouped = get_s3_key("processed", "grouped_tariffs.json")
+    if not file_exists_in_s3(s3_key_grouped):
+        print(f"❌ Step 2 output not found in S3")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
+        raise RuntimeError(f"grouped_tariffs.json was not created in S3: {s3_key_grouped}")
     print("✅ Step 2/3: Tariff grouping completed!")
 
     # ======================================================
@@ -56,7 +72,12 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     if raw_bill_document_id:
         cmd.append(str(raw_bill_document_id))
     
-    subprocess.run(cmd, check=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"❌ Step 3 failed with exit code {result.returncode}")
+        print(f"STDOUT:\n{result.stdout}")
+        print(f"STDERR:\n{result.stderr}")
+        raise RuntimeError(f"extract_logic_llm_call.py failed: {result.stderr}")
 
     # Check if output exists in S3 only
     s3_key_logic = get_s3_key("processed", "final_logic_output.json")
@@ -65,7 +86,7 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     print("✅ Step 3/3: Logic extraction completed!")
 
     print("\n" + "="*60)
-    print("✅ TARIFF PIPELINE COMPLETED SUCCESSFULLY!")
+    print("TARIFF PIPELINE COMPLETED SUCCESSFULLY!")
     print("="*60)
     print(f"📄 Grouped Tariffs: s3://{get_s3_key('processed', 'grouped_tariffs.json')}")
     print(f"🎯 Final Logic Output: s3://{get_s3_key('processed', 'final_logic_output.json')}")

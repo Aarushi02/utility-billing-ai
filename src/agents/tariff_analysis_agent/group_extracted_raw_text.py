@@ -120,11 +120,11 @@ def group_tariffs_v3(input_file, output_file):
         }
         print(f"   -> Captured {current_sc_id} (Date: {eff_date})")
 
-    # Output
-    with open(output_file, 'w') as f:
-        json.dump(grouped_data, f, indent=2)
+    # Upload directly to S3 (no local storage)
+    s3_key_output = get_s3_key("processed", Path(output_file).name)
+    upload_json_to_s3(grouped_data, s3_key_output)
     
-    print(f"✅ Grouping Complete. Saved to {output_file}")
+    print(f"✅ Grouping Complete. Uploaded to S3: {s3_key_output}")
 
 def _get_default_paths():
     root = Path(__file__).resolve().parents[3]

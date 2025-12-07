@@ -97,14 +97,19 @@ def insert_raw_bill_document(metadata: dict):
     """
     logger.info("start of insert_raw_bill_document")
     session = get_session()
+    logger.info("session created for insert_raw_bill_document") 
     try:
         doc = RawBillDocument(**metadata)
+        logger.info(f"RawBillDocument instance created: {doc}")
+        
         session.add(doc)
         session.commit()
-        logger.info(f"📄 Inserted raw document: {metadata.get('file_name')}")
+        logger.info(f"📄 Inserted raw document: {metadata.get('file_name')} (id={doc.id})")
+        return doc.id
     except SQLAlchemyError as e:
         logger.error(f"❌ Failed to insert raw document: {e}")
         session.rollback()
+        return None
     finally:
         logger.info("end of insert_raw_bill_document")
         session.close()
