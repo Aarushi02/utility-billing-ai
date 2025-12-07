@@ -1,8 +1,8 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from types import SimpleNamespace
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional, Union
 
 import pandas as pd
 
@@ -23,7 +23,7 @@ SAFE_GLOBALS = {
 
 def _safe_eval(expr: str, context: Dict[str, Any], *, desc: str = "") -> Any:
     """
-    Evaluate a small arithmetic expression safely with a a limited global namespace.
+    Evaluate a small arithmetic expression safely with a limited global namespace.
     """
     if not expr:
         return None
@@ -127,28 +127,50 @@ def _normalize_sc_code(sc: Optional[str]) -> str:
     return str(sc).upper().replace(" ", "").replace("-", "")
 
 
+def _parse_effective_date(raw: Optional[str]) -> Optional[date]:
+    """
+    Parse an effective_date string from JSON into a date object.
+    Accepts formats like '2009-04-27' or '2009-04-27T00:00:00'.
+    """
+    if not raw:
+        return None
+    try:
+        # pandas is tolerant of many ISO-ish formats
+        return pd.to_datetime(raw).date()
+    except Exception:
+        logger.warning(f"Could not parse effective_date: {raw!r}")
+        return None
+
+
 class AuditEngine:
     """
     Tariff calculation / audit engine.
 
-    This version understands the richer tariff_definitions.json:
-      - fixed_fee
-      - per_kwh / energy_charge
-      - per_kw / demand_charge / demand_fee
-      - per_rkva / reactive_demand_fee
-      - minimum_charge / minimum_bill
-      - voltage-tiered 'value' dicts (SC3)
-      - conditions using time_of_use, delivery_voltage, bill_date, etc.
+    Now supports multiple versions per sc_code with different effective_date.
+    For a given bill, we pick the tariff where:
+
+        effective_date <= read_date (or bill_date)
+        and effective_date is the closest one before that date.
     """
 
     def __init__(self, tariff_definitions_path: str):
-        self.tariff_map = self._load_logic(tariff_definitions_path)
+        # tariff_map: sc_code -> List[dict] (each dict is a tariff version)
+        self.tariff_map: Dict[str, List[dict]] = self._load_logic(tariff_definitions_path)
 
     # --------------------------------------------------------------------- #
     # Loading / mapping tariff JSON
     # --------------------------------------------------------------------- #
 
-    def _load_logic(self, path: str) -> Dict[str, dict]:
+    def _load_logic(self, path: str) -> Dict[str, List[dict]]:
+        """
+        Load tariff JSON. Supports:
+
+        - Old style: one entry per sc_code (no effective_date)
+        - New style: multiple entries per sc_code, each with an 'effective_date'
+
+        Stored as: { 'SC1': [item_v1, item_v2, ...], ... }
+        where each item has an extra field '_effective_date' (date or None).
+        """
         try:
             with open(path, "r") as f:
                 data = json.load(f)
@@ -157,14 +179,33 @@ class AuditEngine:
             if isinstance(data, dict) and "tariffs" in data:
                 data = data["tariffs"]
 
-            mapping: Dict[str, dict] = {}
+            mapping: Dict[str, List[dict]] = {}
+
             for item in data:
                 raw_sc = item["sc_code"]
                 key = _normalize_sc_code(raw_sc)
-                mapping[key] = item
 
-            logger.info(f"Engine loaded logic for: {list(mapping.keys())}")
+                eff_raw = item.get("effective_date") or item.get("effective_from")
+                eff_date = _parse_effective_date(eff_raw)
+                item["_effective_date"] = eff_date
+
+                mapping.setdefault(key, []).append(item)
+
+            # Sort each list by effective_date ascending (None last)
+            for key, items in mapping.items():
+                items.sort(
+                    key=lambda it: (
+                        it["_effective_date"] is None,  # items with date first
+                        it["_effective_date"] or date.min,
+                    )
+                )
+
+            logger.info(
+                "Engine loaded logic for SCs: %s",
+                list(mapping.keys()),
+            )
             return mapping
+
         except FileNotFoundError:
             logger.error(f"Logic file {path} not found.")
             return {}
@@ -173,17 +214,71 @@ class AuditEngine:
             return {}
 
     # --------------------------------------------------------------------- #
+    # Tariff selection per bill
+    # --------------------------------------------------------------------- #
+
+    def _pick_logic_for_bill(
+        self,
+        sc_code: str,
+        bill_dt: Optional[Union[datetime, date]],
+    ) -> Optional[dict]:
+        """
+        For a given SC and bill/read date, choose the correct tariff version.
+
+        Rule:
+          - consider all versions for this sc_code
+          - among those with effective_date <= bill_dt, pick the one
+            with the MAX effective_date (closest before the bill)
+          - if none match, fall back to the latest available version
+        """
+        versions = self.tariff_map.get(sc_code)
+        if not versions:
+            return None
+
+        if bill_dt is None or pd.isna(bill_dt):
+            # No date -> use latest version
+            return versions[-1]
+
+        if isinstance(bill_dt, datetime):
+            bill_d = bill_dt.date()
+        else:
+            bill_d = bill_dt
+
+        # Filter by effective_date <= bill_d
+        candidates = [
+            v for v in versions
+            if v["_effective_date"] is not None and v["_effective_date"] <= bill_d
+        ]
+
+        if candidates:
+            # Choose the one with the largest effective_date
+            selected = max(candidates, key=lambda v: v["_effective_date"])
+            return selected
+
+        # If no effective_date <= bill date, fall back to the earliest defined
+        return versions[0]
+
+    # --------------------------------------------------------------------- #
     # Core billing logic
     # --------------------------------------------------------------------- #
 
     def calculate_expected_bill(self, row: pd.Series) -> dict:
         """
         Given a user_bills row, compute expected bill based on tariff logic.
+        Tariff version is chosen by SC + read_date/bill_date.
         """
         raw_sc = row.get("service_class", "SC1")
         sc_code = _normalize_sc_code(raw_sc)
 
-        logic = self.tariff_map.get(sc_code)
+        # Prefer read_date, then bill_date
+        bill_date = row.get("read_date") or row.get("bill_date")
+        if isinstance(bill_date, str):
+            try:
+                bill_date = pd.to_datetime(bill_date)
+            except Exception:
+                pass
+
+        logic = self._pick_logic_for_bill(sc_code, bill_date)
         if not logic:
             reason = f"No logic for {raw_sc} (normalized={sc_code})"
             return {
@@ -211,14 +306,6 @@ class AuditEngine:
                 "variance": 0.0,
                 "trace": [reason],
             }
-
-        # Prepare context from user_bills row
-        bill_date = row.get("bill_date")
-        if isinstance(bill_date, str):
-            try:
-                bill_date = pd.to_datetime(bill_date)
-            except Exception:
-                pass
 
         # Additional fields used in some tariffs (SC1-TOU, SC3A, etc.)
         time_of_use = row.get("time_of_use")  # e.g. 'On Peak', 'Off Peak'
@@ -411,7 +498,7 @@ class AuditEngine:
         # ---- final variance ----------------------------------------------
 
         actual_bill = float(row.get("bill_amount", 0.0) or 0.0)
-        variance = actual_bill-total_expected
+        variance = actual_bill - total_expected
 
         return {
             "status": "SUCCESS",

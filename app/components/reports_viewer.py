@@ -34,7 +34,7 @@ def _get_available_accounts() -> list[str]:
     Fetch all user_bills from DB and return unique bill_account values.
     """
     try:
-        df = fetch_user_bills(account_id=None)   
+        df = fetch_user_bills(account_id=None)
     except Exception as e:
         logger.error(f"Error fetching bills for account list: {e}")
         return []
@@ -59,11 +59,96 @@ def _get_available_accounts() -> list[str]:
     return accounts
 
 
+def _get_account_read_years(account_id: str) -> list[int]:
+    """
+    For a given account, fetch its bills and return the distinct years
+    present in the read_date column.
+    """
+    try:
+        df = fetch_user_bills(account_id=account_id)
+    except Exception as e:
+        logger.error(f"Error fetching bills for account {account_id}: {e}")
+        return []
+
+    if df is None or df.empty:
+        logger.warning(f"No bills found for account {account_id}")
+        return []
+
+    if "read_date" not in df.columns:
+        logger.warning("Column 'read_date' missing in user_bills result.")
+        return []
+
+    dates = pd.to_datetime(df["read_date"], errors="coerce")
+    years = (
+        dates.dropna()
+        .dt.year.astype("Int64")
+        .dropna()
+        .unique()
+        .tolist()
+    )
+    years = sorted(int(y) for y in years)
+    logger.info(f"Account {account_id} has bills in years: {years}")
+    return years
+
+
+def _build_tariff_sources_for_account(account_id: str):
+    """
+    Decide which tariff JSON(s) to use for a given account based on the years
+    present in its read_date values.
+
+    Logic:
+    - If all read_dates are in the same year -> use that year's tariff JSON.
+    - If multiple years -> build a list of year-specific tariff JSONs.
+
+    NOTE:
+    The *per-bill* selection logic (`read_date > effective_date` and
+    "effective_date closest to read_date") should be implemented inside
+    the tariff engine / BillAuditReporter using the effective_date fields
+    in your JSONs / DB table.
+    """
+    years = _get_account_read_years(account_id)
+
+    # Fallback: if we couldn't determine years, just use the default file.
+    if not years:
+        logger.warning(
+            "Falling back to default tariff_definitions.json "
+            "because no valid years were found for the account."
+        )
+        default_path = get_file_path("processed", "tariff_definitions.json")
+        return default_path
+
+    # Single-year: just one JSON for that year
+    if len(years) == 1:
+        year = years[0]
+        # Example naming convention: tariff_definitions_2021.json
+        year_file_name = f"tariff_definitions_{year}.json"
+        year_tariff_path = get_file_path("processed", year_file_name)
+        logger.info(
+            f"Using single-year tariff JSON for account {account_id}: {year_tariff_path}"
+        )
+        return year_tariff_path
+
+    # Multi-year: build list of JSONs, one per year
+    tariff_files = []
+    for year in years:
+        year_file_name = f"tariff_definitions_{year}.json"
+        year_tariff_path = get_file_path("processed", year_file_name)
+        tariff_files.append(year_tariff_path)
+
+    logger.info(
+        f"Account {account_id} spans multiple years {years}. "
+        f"Passing tariff JSONs: {tariff_files}"
+    )
+    return tariff_files
+
+
 def render_report_viewer():
     """
     Streamlit page: Audit Report Viewer
 
     - User selects an account number
+    - We determine if its bills span one or multiple years
+    - We choose the appropriate tariff JSON(s) based on effective dates / years
     - We run BillAuditReporter.generate_audit(account_id=...)
     - Show the text report and tabular results
     - Provide an Excel download button
@@ -75,7 +160,6 @@ def render_report_viewer():
     # 1. Account Selection
     # ---------------------------------------------------------
     accounts = _get_available_accounts()
-    #we have date in accounts
 
     if not accounts:
         st.warning("No account numbers found in user_bills.")
@@ -94,19 +178,32 @@ def render_report_viewer():
         st.info("Select an account and click **Run Audit for Selected Account**.")
         return
 
-    # check logis to know all account dates are in single year or multiple year
     # ---------------------------------------------------------
-    # 2. Initialize BillAuditReporter
+    # 2. Decide which tariff JSON(s) to use for this account
+    #    based on the years in its read_date values.
     # ---------------------------------------------------------
-    # Tariff JSON from data/processed (same as in your generator script)
-    tariff_file = get_file_path("processed", "tariff_definitions.json")
+    tariff_source = _build_tariff_sources_for_account(selected_account)
 
-    reporter = BillAuditReporter(tariff_file)
-
-    #
+    # Helpful UI hint for you / reviewers
+    if isinstance(tariff_source, list):
+        st.caption(
+            f"Detected bills across multiple years. "
+            f"Using year-specific tariff definitions: {', '.join(os.path.basename(p) for p in tariff_source)}"
+        )
+    else:
+        st.caption(
+            f"Detected bills in a single year. "
+            f"Using tariff definitions file: {os.path.basename(tariff_source)}"
+        )
 
     # ---------------------------------------------------------
-    # 3. Run audit for the chosen account
+    # 3. Initialize BillAuditReporter
+    #    (supports either a single file path or a list of paths)
+    # ---------------------------------------------------------
+    reporter = BillAuditReporter(tariff_source)
+
+    # ---------------------------------------------------------
+    # 4. Run audit for the chosen account
     # ---------------------------------------------------------
     with st.spinner(f"Running audit for account {selected_account}..."):
         text_report = reporter.generate_audit(account_id=selected_account)
@@ -128,7 +225,7 @@ def render_report_viewer():
     results_df = pd.DataFrame(results)
 
     # ---------------------------------------------------------
-    # 4. Show text report + DataFrame preview
+    # 5. Show text report + DataFrame preview
     # ---------------------------------------------------------
     st.subheader("📄 Audit Text Report")
     st.caption("This is the same human-readable report your CLI script prints.")
@@ -147,13 +244,12 @@ def render_report_viewer():
     # Optional: hide verbose columns like `trace` from the main preview
     preview_df = results_df.copy()
     if "trace" in preview_df.columns:
-        # Keep trace only in the underlying data, not in the main table
         preview_df = preview_df.drop(columns=["trace"])
 
     st.dataframe(preview_df, use_container_width=True)
 
     # ---------------------------------------------------------
-    # 5. Download as Excel
+    # 6. Download as Excel
     # ---------------------------------------------------------
     excel_bytes = _df_to_excel_bytes(results_df, selected_account)
 
