@@ -203,9 +203,16 @@ def update_pipeline_run(run_id: int, status: str, error_msg: str = None):
         session.close()
 
 
-def insert_user_bill(record: dict):
+def insert_user_bill(record: dict, raw_bill_document_id: int = None):
     """
     Inserts a single UserBills record.
+    
+    Parameters
+    ----------
+    record : dict
+        Bill data dictionary
+    raw_bill_document_id : int, optional
+        Foreign key reference to raw_documents table
     
     Returns
     -------
@@ -216,10 +223,12 @@ def insert_user_bill(record: dict):
     session = get_session()
     try:
         bill = UserBills(**record)
+        if raw_bill_document_id:
+            bill.raw_bill_document_id = raw_bill_document_id
         session.add(bill)
         session.commit()
         bill_account = record.get('bill_account')
-        logger.info(f"📄 Inserted UserBills record for Account {bill_account}")
+        logger.info(f"📄 Inserted UserBills record for Account {bill_account} (raw_doc_id={raw_bill_document_id})")
         return bill_account
     except SQLAlchemyError as e:
         logger.error(f"❌ Failed to insert UserBills record: {e}")
@@ -542,12 +551,31 @@ def fetch_user_bills_with_issues(account_id: str, issue_type: Optional[str] = No
 # 7️⃣ Tariff Version & Logic Management (ORM, session.query)
 # ----------------------------------------------------------------------
 
-def register_tariff_document(filename: str, utility_name: str, document_version: Optional[str] = None, description: Optional[str] = None) -> int:
+def register_tariff_document(filename: str, utility_name: str, document_version: Optional[str] = None, description: Optional[str] = None, raw_bill_document_id: int = None) -> int:
     """
     Register or update a tariff document and return its id.
     - Uses ORM with session.query (no raw SQL / conn).
     - If document exists (by unique filename), updates metadata and refreshes upload_date.
     - Otherwise inserts a new row.
+    - Links to RawBillDocument for traceability.
+    
+    Parameters
+    ----------
+    filename : str
+        The tariff document filename
+    utility_name : str
+        Name of the utility (e.g., 'National Grid NY')
+    document_version : str, optional
+        Version identifier (e.g., 'PSC 220')
+    description : str, optional
+        Description of the document
+    raw_bill_document_id : int, optional
+        Foreign key reference to raw_documents table
+    
+    Returns
+    -------
+    int
+        The ID of the registered tariff document
     """
     logger.info("start of register_tariff_document")
     session = get_session()
@@ -567,7 +595,7 @@ def register_tariff_document(filename: str, utility_name: str, document_version:
             )
             session.add(doc)
         session.commit()
-        logger.info(f"📄 Registered tariff document id={doc.id} filename={filename}")
+        logger.info(f"📄 Registered tariff document id={doc.id} filename={filename} (raw_doc_id={raw_bill_document_id})")
         return doc.id
     except SQLAlchemyError as e:
         session.rollback()
@@ -583,6 +611,13 @@ def save_tariff_logic_version(doc_id: int, logic_item: dict) -> bool:
     - Expects logic_item with keys: sc_code, metadata.effective_date, and JSON logic fields.
     - Uses ORM with session.query (no raw SQL / conn).
     - Removes 'metadata' wrapper before persisting to keep logic_json clean.
+    
+    Parameters
+    ----------
+    doc_id : int
+        TariffDocument ID
+    logic_item : dict
+        Logic data with sc_code, metadata.effective_date, etc.
     """
     import json
     from dateutil import parser as dateparser

@@ -43,10 +43,12 @@ class PipelineRun(Base):
 class UserBills(Base):
     """
     Stores detailed billing information for each user.
+    Links to RawBillDocument to track source PDF.
     """
     __tablename__ = "user_bills"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    raw_bill_document_id = Column(Integer, ForeignKey("raw_documents.id"), nullable=True)
     bill_account = Column(String(100))
     customer = Column(String(255))
     bill_date = Column(Date)
@@ -102,11 +104,13 @@ class LogEntry(Base):
 class TariffDocument(Base):
     """
     Tracks uploaded tariff source PDFs for traceability.
+    Links to RawBillDocument to track source.
     Maps to table: tariff_documents
     """
     __tablename__ = "tariff_documents"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    raw_bill_document_id = Column(Integer, ForeignKey("raw_documents.id"), nullable=True)
     filename = Column(String(255), nullable=False, unique=True)
     utility_name = Column(String(100), nullable=False)
     upload_date = Column(DateTime, default=datetime.utcnow)
@@ -119,12 +123,13 @@ class TariffLogicVersion(Base):
     """
     Stores calculation rules linked to a Service Class and time window.
     Supports querying rules active for a given date.
+    Links to TariffDocument (tariff source) for traceability.
     Maps to table: tariff_logic_versions
     """
     __tablename__ = "tariff_logic_versions"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    tariff_document_id = Column(Integer, ForeignKey("tariff_documents.id", ondelete="CASCADE"))
+    tariff_document_id = Column(Integer, ForeignKey("tariff_documents.id"), nullable=True)
     sc_code = Column(String(50), nullable=False)
     effective_date = Column(Date, nullable=False)
     end_date = Column(Date)

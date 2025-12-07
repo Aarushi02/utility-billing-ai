@@ -68,7 +68,7 @@ def render_file_uploader():
             }
 
             try:
-                insert_raw_bill_document(metadata)
+                doc_id= insert_raw_bill_document(metadata)
             except Exception as e:
                 st.error(f"Error logging bill file {file.name}: {e}")
 
@@ -121,7 +121,7 @@ def render_file_uploader():
                     """.format(file.name), unsafe_allow_html=True)
                 
                 # Process the file
-                df, total_anomalies = process_bill(file_path)
+                df, total_anomalies = process_bill(file_path, document_id=doc_id)
                 
                 # Clean up temp file
                 import os
@@ -250,6 +250,33 @@ def render_file_uploader():
         elif tariff_files:
             for file in tariff_files:
                 try:
+                    # ---------- UPLOAD TO S3 ----------
+                    s3_key = get_s3_key("raw/tariff", file.name)
+                    if not upload_fileobject_to_s3(file, s3_key):
+                        raise Exception(f"Failed to upload {file.name} to S3")
+                    
+                    # ---------- DOWNLOAD TO TEMP FOR PROCESSING ----------
+                    temp_path = download_to_temp(s3_key)
+                    if not temp_path:
+                        raise Exception(f"Failed to download {file.name} from S3")
+                    
+                    file_path = Path(temp_path)
+
+                    # ---------- LOG UPLOAD IN DB ----------
+                    metadata = {
+                        "file_name": file.name,
+                        "file_type": Path(file.name).suffix.lower(),
+                        "upload_date": datetime.now(),
+                        "source": "User Upload (Tariff)",
+                        "status": "uploaded",
+                        "s3_key": s3_key
+                    }
+
+                    try:
+                        tariff_doc_id = insert_raw_bill_document(metadata)
+                    except Exception as e:
+                        st.error(f"Error logging tariff file {file.name}: {e}")
+
                     # ---------- FULL SCREEN OVERLAY ----------
                     overlay = st.empty()
                     overlay.markdown(f"""
@@ -285,21 +312,9 @@ def render_file_uploader():
                         </style>
                     """, unsafe_allow_html=True)
 
-                    # ---------- UPLOAD TO S3 ----------
-                    s3_key = get_s3_key("raw/tariff", file.name)
-                    if not upload_fileobject_to_s3(file, s3_key):
-                        raise Exception(f"Failed to upload {file.name} to S3")
-                    
-                    # ---------- DOWNLOAD TO TEMP FOR PROCESSING ----------
-                    temp_path = download_to_temp(s3_key)
-                    if not temp_path:
-                        raise Exception(f"Failed to download {file.name} from S3")
-                    
-                    file_path = Path(temp_path)
-
                     # ---------- RUN PIPELINE ----------
                     from src.orchestrator.pipeline_runner import run_tariff_pipeline
-                    results = run_tariff_pipeline(file_path)
+                    results = run_tariff_pipeline(file_path, raw_bill_document_id=tariff_doc_id)
                     
                     # Clean up temp file
                     import os

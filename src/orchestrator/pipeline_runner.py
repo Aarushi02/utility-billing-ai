@@ -7,7 +7,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.aws_app import file_exists_in_s3, get_s3_key
 
-def run_tariff_pipeline(pdf_path: Path):
+def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
 
     pdf_path = Path(pdf_path)
     print("PATH:", pdf_path)
@@ -51,7 +51,12 @@ def run_tariff_pipeline(pdf_path: Path):
     if not step3.exists():
         raise FileNotFoundError(f"Missing: {step3}")
 
-    subprocess.run([sys.executable, str(step3), str(pdf_path)], check=True)
+    # Build command with document_id if provided
+    cmd = [sys.executable, str(step3), str(pdf_path)]
+    if raw_bill_document_id:
+        cmd.append(str(raw_bill_document_id))
+    
+    subprocess.run(cmd, check=True)
 
     # Check if output exists in S3 only
     s3_key_logic = get_s3_key("processed", "final_logic_output.json")

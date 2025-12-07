@@ -60,7 +60,7 @@ def clean_json_response(response_text):
         return response_text.split("```")[1].split("```")[0].strip()
     return response_text.strip()
 
-def extract_tariff_logic_hybrid(input_file, output_file):
+def extract_tariff_logic_hybrid(input_file, output_file, raw_bill_document_id=None):
     logger.info(f"--- Starting Phase 2: Logic Extraction ---")
     
     # Load from S3 only
@@ -87,7 +87,9 @@ def extract_tariff_logic_hybrid(input_file, output_file):
         # 1. Register Source Document (no conn needed - uses session internally)
         doc_id = register_tariff_document(
             filename=CURRENT_PDF_FILENAME,
-            utility_name=UTILITY_NAME
+            utility_name=UTILITY_NAME,
+            raw_bill_document_id=raw_bill_document_id
+            
         )
         
         for sc_code, data in grouped_data.items():
@@ -169,4 +171,4 @@ def _get_default_paths():
 if __name__ == "__main__":
     in_file, out_file = _get_default_paths()
     # Run directly - will fetch from S3
-    extract_tariff_logic_hybrid(str(in_file), str(out_file))
+    extract_tariff_logic_hybrid(str(in_file), str(out_file),raw_bill_document_id=None)

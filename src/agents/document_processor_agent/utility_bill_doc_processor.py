@@ -275,7 +275,7 @@ def extract_bill_data(pdf_path: Path):
     return rows
 
 # ---------------- output and database insertion ----------------
-def process_bill(pdf_path: Path):
+def process_bill(pdf_path: Path, document_id: int = None):
     rows = extract_bill_data(pdf_path)
     df_out = pd.DataFrame(rows)
     for c in DEST_COLS:
@@ -346,7 +346,7 @@ def process_bill(pdf_path: Path):
             "created_at": datetime.utcnow(),
         }
         try:
-            bill_account = insert_user_bill(record)
+            bill_account = insert_user_bill(record, document_id=document_id)
             if bill_account:
                 validated_accounts.add(bill_account)  # Track unique accounts for validation
             inserted += 1
