@@ -298,7 +298,7 @@ def render_file_uploader():
                     file_path = Path(temp_path)
 
                     # ---------- RUN PIPELINE ----------
-                    from src.agents.tariff_analysis_agent.pipeline_runner import run_tariff_pipeline
+                    from src.orchestrator.pipeline_runner import run_tariff_pipeline
                     results = run_tariff_pipeline(file_path)
                     
                     # Clean up temp file
