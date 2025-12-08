@@ -144,7 +144,6 @@ page_icons = {
     "Upload & Ingest": "📁",
     "Audit Bills": "📄",
     "Manage Tariffs": "📑",
-    "Execute Pipeline": "▶️",
     "Pipeline Status": "📊",
     "Generate Reports": "📋",
     "Upload History": "📜",
@@ -233,13 +232,19 @@ elif page == "Manage Tariffs":
     from app.components.tariff_details_viewer import render_tariff_details_viewer
     render_tariff_details_viewer()
 
-elif page == "Execute Pipeline":
-    from app.components.workflow_runner import render_workflow_runner
-    render_workflow_runner()
-
 elif page == "Pipeline Status":
-    from app.components.pipeline_monitor import render_pipeline_monitor
-    render_pipeline_monitor()
+    st.title("📊 Pipeline Status")
+    st.markdown("---")
+    st.markdown("""
+    <div style="display: flex; align-items: center; justify-content: center; height: 500px; flex-direction: column; gap: 20px;">
+        <div style="font-size: 120px; text-align: center;">🚀</div>
+        <div style="text-align: center;">
+            <h1 style="font-size: 48px; font-weight: 800; margin: 0;">Coming Soon</h1>
+            <p style="font-size: 18px; opacity: 0.8; margin-top: 10px; color: #666;">Pipeline Status monitoring feature is under development.</p>
+            <p style="font-size: 14px; opacity: 0.6; color: #999;">Check back soon for real-time pipeline execution tracking and logs.</p>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 elif page == "Generate Reports":
     from app.components.reports_viewer import render_report_viewer

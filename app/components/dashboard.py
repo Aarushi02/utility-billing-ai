@@ -41,14 +41,6 @@ def render_dashboard():
             "icon": "📑"
         },
         {
-            "title": "▶️ Execute Pipeline",
-            "description": "Run the complete processing pipeline",
-            "details": "Automate extraction, grouping, and analysis in one click",
-            "page": "Execute Pipeline",
-            "color": "#4facfe",
-            "icon": "▶️"
-        },
-        {
             "title": "📊 Pipeline Status",
             "description": "Monitor pipeline execution",
             "details": "Real-time tracking of processing jobs and execution logs",
