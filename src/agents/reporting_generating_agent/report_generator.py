@@ -269,53 +269,8 @@ class BillAuditReporter:
         self.last_results = audit_results
         return self._format_text_report(audit_results, account_id)
 
-    # ------------------------------------------------------------------ #
-    # DB writeback: BillValidationResult
-    # ------------------------------------------------------------------ #
+    
 
-    def _persist_validation_result(
-        self,
-        entry: Dict,
-        account_id: str,
-        db_bills: pd.DataFrame,
-    ):
-        """
-        Helper to save discrepancy to DB using db_utils.
-        """
-        user_bill_id = entry.get("user_bill_id")
-
-        # If user_bill_id not already present, try to match by bill_date
-        if not user_bill_id and not db_bills.empty:
-            entry_date = (
-                pd.to_datetime(entry["date"]).date()
-                if entry["date"] is not None
-                else None
-            )
-            if entry_date:
-                match = db_bills[db_bills["bill_date"] == entry_date]
-                if not match.empty and "id" in match.columns:
-                    user_bill_id = int(match.iloc[0]["id"])
-
-        issue_type = (
-            "High Variance"
-            if entry["status"] == "SUCCESS"
-            else "Calculation Error or Skipped"
-        )
-
-        record = {
-            "user_bill_id": user_bill_id,  # Can be None if link fails
-            "account_id": account_id,
-            "issue_type": issue_type,
-            "description": (
-                f"Variance: ${entry['variance']:.2f}. "
-                f"Actual: ${entry['actual']:.2f}, Expected: ${entry['expected']:.2f}. "
-                f"Status: {entry['status']}"
-            ),
-            "status": "open",
-            "detected_on": datetime.utcnow(),
-        }
-
-        insert_bill_validation_result(record)
 
     # ------------------------------------------------------------------ #
     # Text report formatting (unchanged)
