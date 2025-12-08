@@ -16,6 +16,10 @@ This document outlines all technologies, platforms, and services used in the Uti
   - `apache-airflow-providers-standard==1.9.0`
   - `apache-airflow-providers-common-sql==1.28.1`
   - `apache-airflow-task-sdk==1.1.0`
+- **DAGs**:
+  - `utility_billing_pipeline` - Main billing extraction and validation (3 tasks)
+  - `tariff_pipeline_dag` - Tariff document processing
+  - `test_dag` - Test/example DAG
 - **Features**:
   - REST API v2 with JWT authentication
   - PythonOperator for task execution
@@ -35,10 +39,18 @@ This document outlines all technologies, platforms, and services used in the Uti
 ## 🗄️ **Database & ORM**
 
 ### PostgreSQL
-- **Version**: 14
+- **Version**: 14+
 - **Purpose**: Primary relational database for production
-- **Deployment**: AWS RDS (c57oa7dm3pc281.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com)
+- **Deployment**: AWS RDS (cluster-based)
 - **Connection**: psycopg2 driver
+- **Tables**:
+  - `raw_documents` - Uploaded bill/tariff document metadata
+  - `pipeline_runs` - Airflow DAG execution tracking
+  - `user_bills` - Extracted bill data
+  - `bill_validation_results` - Error detection and validation findings
+  - `tariff_documents` - Tariff source PDFs
+  - `tariff_logic_versions` - Tariff calculation rules by service class
+  - `logs` - Application audit logs
 
 ### SQLAlchemy
 - **Version**: Latest (via Flask-SQLAlchemy 3.0.5)
@@ -80,27 +92,28 @@ This document outlines all technologies, platforms, and services used in the Uti
 ## 🎨 **Frontend & UI**
 
 ### Streamlit
-- **Version**: Latest
+- **Version**: 1.51.0 (Latest)
 - **Purpose**: Interactive web UI for the application
-- **Packages**: streamlit (latest)
+- **Packages**: streamlit==1.51.0
 - **Features**:
   - Session state management
   - Multi-page routing
   - Component-based architecture
   - Secrets management for cloud deployment
 - **Pages**:
+  - Home Dashboard
   - Upload & Ingest
   - Audit Bills
   - Manage Tariffs
-  - Execute Pipeline
-  - Pipeline Status
+  - Pipeline Status (Coming Soon)
   - Generate Reports
   - Upload History
 
 ### Streamlit Cloud
 - **Purpose**: Deployment platform for Streamlit apps
-- **Secrets Management**: TOML-based configuration
+- **Secrets Management**: TOML-based configuration in `.streamlit/secrets.toml`
 - **Authentication**: Login system with session control
+- **Automatic Reloading**: Changes to secrets take effect immediately without redeployment
 
 ---
 

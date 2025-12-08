@@ -54,7 +54,8 @@ This system leverages a **Multi-Agent Architecture** with **LLM-powered intellig
                       │
 ┌─────────────────────v──────────────────────────────────┐
 │      ORCHESTRATOR (Apache Airflow 3.1)                  │
-│  ✓ tariff_pipeline DAG (3 sequential tasks)             │
+│  ✓ utility_billing_pipeline DAG (3 sequential tasks)   │
+│  ✓ tariff_pipeline_dag for tariff processing           │
 │  ✓ Dependency management                                │
 │  ✓ REST API for task triggering                         │
 │  ✓ Execution logging and monitoring                     │
@@ -98,13 +99,16 @@ This system leverages a **Multi-Agent Architecture** with **LLM-powered intellig
 │           DATA LAYER                                    │
 │                                                         │
 │  Database (PostgreSQL RDS)                              │
+│  ├─ raw_documents                                       │
+│  ├─ pipeline_runs                                       │
 │  ├─ user_bills                                          │
-│  ├─ bill_validation_result                              │
+│  ├─ bill_validation_results                             │
+│  ├─ tariff_documents                                    │
 │  ├─ tariff_logic_versions                               │
-│  └─ audit_reports                                       │
+│  └─ logs                                                │
 │                                                         │
 │  File Storage (AWS S3)                                  │
-│  ├─ raw_extracted_tarif.json                            │
+│  ├─ raw_extracted_tariff.json                           │
 │  ├─ grouped_tariffs.json                                │
 │  ├─ final_logic_output.json                             │
 │  └─ audit_reports (PDF/CSV)                             │

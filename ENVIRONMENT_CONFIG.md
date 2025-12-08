@@ -20,13 +20,17 @@ Your application now works with **both local development (.env) and Streamlit Cl
    DB_PASSWORD=your-password
    DB_NAME=utility_billing
    
-   aws_access_key_id=your-access-key
-   Secret_access_key=your-secret-key
+   AWS_ACCESS_KEY_ID=your-access-key
+   AWS_SECRET_ACCESS_KEY=your-secret-key
    AWS_BUCKET_NAME=utility-billing-data
    AWS_REGION=us-east-1
    
    OPENAI_API_KEY=your-openai-key
    OPENAI_MODEL=gpt-4o-mini
+   
+   AIRFLOW_API_URL=http://localhost:8080/api/v2
+   AIRFLOW_API_USER=airflow
+   AIRFLOW_API_PASSWORD=airflow
    ```
 
 3. Run locally:
@@ -41,7 +45,6 @@ Your application now works with **both local development (.env) and Streamlit Cl
 2. In **Streamlit Cloud Dashboard**:
    - Navigate to your app settings (⚙️ gear icon)
    - Click **"Secrets"**
-   - Copy the contents from `.streamlit/secrets.toml.example`
    - Paste into the Secrets editor in TOML format:
    ```toml
    DB_TYPE = "postgres"
@@ -51,8 +54,8 @@ Your application now works with **both local development (.env) and Streamlit Cl
    DB_PASSWORD = "your-password"
    DB_NAME = "your-db"
    
-   aws_access_key_id = "your-key"
-   Secret_access_key = "your-secret"
+   AWS_ACCESS_KEY_ID = "your-key"
+   AWS_SECRET_ACCESS_KEY = "your-secret"
    AWS_BUCKET_NAME = "utility-billing-data"
    AWS_REGION = "us-east-1"
    
@@ -60,9 +63,8 @@ Your application now works with **both local development (.env) and Streamlit Cl
    OPENAI_MODEL = "gpt-4o-mini"
    
    AIRFLOW_API_URL = "http://localhost:8080/api/v2"
-   AIRFLOW_API_USER = "user"
-   AIRFLOW_API_PASSWORD = "pass"
-   AIRFLOW_DAG_ID = "utility_billing_pipeline"
+   AIRFLOW_API_USER = "airflow"
+   AIRFLOW_API_PASSWORD = "airflow"
    
    ENV = "prod"
    ```
@@ -86,12 +88,14 @@ This means:
 - **Never commit `.env`** to GitHub - it's in `.gitignore`
 - **Secrets are encrypted** in Streamlit Cloud
 - The **`get_env()` function** is safe to use in any module
-- **AWS credentials** use `aws_access_key_id` and `Secret_access_key` (preserve capitalization)
+- **AWS credentials** use `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (uppercase with underscores)
+- **Airflow variables** use standard naming: `AIRFLOW_API_URL`, `AIRFLOW_API_USER`, `AIRFLOW_API_PASSWORD`
+- **Database** connection requires both `DB_HOST` and `DB_USER` with proper credentials
 - Streamlit reloads automatically when secrets change (no redeployment needed)
 
 ## Troubleshooting
 
-**"Missing API_KEY or DATABASE_URL"** error?
+**"Missing API_KEY or DATABASE_URL" error?**
 - Check that all required variables are in your secrets or `.env`
 - On Streamlit Cloud: verify secrets are properly saved in the dashboard
 - Locally: ensure `.env` file exists and is properly formatted
@@ -99,3 +103,19 @@ This means:
 **Can't access secrets?**
 - Ensure you're using the `get_env()` helper function
 - The function gracefully handles missing secrets and falls back to `os.environ`
+- Use correct variable names: `AWS_ACCESS_KEY_ID` (not `aws_access_key_id`)
+
+**Database connection error?**
+- Verify `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` are correct
+- For AWS RDS, ensure security groups allow your IP address
+- Test connection: `psql -h {DB_HOST} -U {DB_USER} -d {DB_NAME}`
+
+**Airflow API not responding?**
+- Ensure `AIRFLOW_API_URL` is correct (e.g., `http://localhost:8080/api/v2`)
+- Verify `AIRFLOW_API_USER` and `AIRFLOW_API_PASSWORD` are correct
+- Check Airflow service is running: `airflow webserver --port 8080`
+
+**OpenAI API key invalid?**
+- Verify `OPENAI_API_KEY` is from https://platform.openai.com/api-keys
+- Ensure key has not expired or been revoked
+- Check correct model name: `gpt-4o-mini` (not `gpt-4`)

@@ -63,7 +63,7 @@ Table extraction (camelot)
     ↓
 Structured JSON with all bill data
     ↓
-Upload to AWS S3 (raw_extracted_tarif.json)
+Upload to AWS S3 (raw_extracted_tariff.json)
 ```
 
 ### **Step 3: Tariff Analysis** ⚖️
@@ -142,25 +142,19 @@ Create audit reports showing:
 - Manage rate structures
 - Test tariff logic
 
-### **4. ⚡ Execute Pipeline**
-- Trigger Airflow DAG manually
-- Monitor job execution
-- View task progress
-- Debug errors
-
-### **5. 📊 Pipeline Status**
+### **4. 📊 Pipeline Status** (Coming Soon)
 - Real-time monitoring of running DAGs
 - Task status (running, success, failed)
 - Task logs and error messages
 - Execution timeline
 
-### **6. 📋 Generate Reports**
+### **5. 📋 Generate Reports**
 - Create audit reports
 - Export as PDF/CSV
 - Summary statistics
 - Overcharge details
 
-### **7. 📑 Upload History**
+### **6. 📑 Upload History**
 - View all uploaded files
 - Track processing status
 - Reprocess files
@@ -214,12 +208,16 @@ Create audit reports showing:
 │        DATA LAYER                       │
 │                                         │
 │  Database (PostgreSQL RDS)              │
+│  - raw_documents                        │
+│  - pipeline_runs                        │
 │  - user_bills                           │
-│  - bill_validation_result               │
+│  - bill_validation_results              │
+│  - tariff_documents                     │
 │  - tariff_logic_versions                │
+│  - logs                                 │
 │                                         │
 │  File Storage (AWS S3)                  │
-│  - raw_extracted_tarif.json             │
+│  - raw_extracted_tariff.json            │
 │  - grouped_tariffs.json                 │
 │  - final_logic_output.json              │
 └─────────────────────────────────────────┘
@@ -260,7 +258,7 @@ Create audit reports showing:
    ├─ Task 1: Extract Text from PDF
    │  - Read PDF page by page
    │  - Extract account #, usage, charges
-   │  - Save to S3: raw_extracted_tarif.json
+   │  - Save to S3: raw_extracted_tariff.json
    │  ↓
    ├─ Task 2: Group Tariffs by Service Class
    │  - Read uploaded tariff document
