@@ -96,48 +96,57 @@ def _build_tariff_sources_for_account(account_id: str):
     Decide which tariff JSON(s) to use for a given account based on the years
     present in its read_date values.
 
-    Logic:
-    - If all read_dates are in the same year -> use that year's tariff JSON.
-    - If multiple years -> build a list of year-specific tariff JSONs.
-
-    NOTE:
-    The *per-bill* selection logic (`read_date > effective_date` and
-    "effective_date closest to read_date") should be implemented inside
-    the tariff engine / BillAuditReporter using the effective_date fields
-    in your JSONs / DB table.
+    NEW LOGIC ADDED:
+    - If tariff_definitions_{year}.json is missing in /processed,
+      automatically fall back to tariff_definitions.json.
     """
+
     years = _get_account_read_years(account_id)
 
-    # Fallback: if we couldn't determine years, just use the default file.
+    # Fallback: if years could not be determined
+    default_path = get_file_path("processed", "tariff_definitions.json")
+
     if not years:
         logger.warning(
-            "Falling back to default tariff_definitions.json "
-            "because no valid years were found for the account."
+            "No valid years found for account. Falling back to default tariff_definitions.json"
         )
-        default_path = get_file_path("processed", "tariff_definitions.json")
         return default_path
 
-    # Single-year: just one JSON for that year
+    # --- SINGLE YEAR CASE ---
     if len(years) == 1:
         year = years[0]
-        # Example naming convention: tariff_definitions_2021.json
         year_file_name = f"tariff_definitions_{year}.json"
         year_tariff_path = get_file_path("processed", year_file_name)
-        logger.info(
-            f"Using single-year tariff JSON for account {account_id}: {year_tariff_path}"
-        )
+
+        # NEW: Check if file exists
+        if not os.path.exists(year_tariff_path):
+            logger.warning(
+                f"Tariff file for year {year} not found: {year_tariff_path}. "
+                f"Falling back to default tariff_definitions.json."
+            )
+            return default_path
+
+        logger.info(f"Using single-year tariff JSON: {year_tariff_path}")
         return year_tariff_path
 
-    # Multi-year: build list of JSONs, one per year
+    # --- MULTI-YEAR CASE ---
     tariff_files = []
     for year in years:
         year_file_name = f"tariff_definitions_{year}.json"
         year_tariff_path = get_file_path("processed", year_file_name)
-        tariff_files.append(year_tariff_path)
+
+        if os.path.exists(year_tariff_path):
+            tariff_files.append(year_tariff_path)
+        else:
+            logger.warning(
+                f"Tariff file for year {year} missing: {year_tariff_path}. "
+                f"Using default tariff_definitions.json instead."
+            )
+            tariff_files.append(default_path)
 
     logger.info(
         f"Account {account_id} spans multiple years {years}. "
-        f"Passing tariff JSONs: {tariff_files}"
+        f"Tariff sources resolved to: {tariff_files}"
     )
     return tariff_files
 
