@@ -1,61 +1,338 @@
-# Utility Billing AI Audit System ⚡📄💰
+# 🏢 The Agentic Auditor - Utility Billing AI ⚡📄💰
 
 **An intelligent, multi-agent AI system for automating utility bill auditing, tariff analysis, and overcharge detection.**
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red) ![Airflow](https://img.shields.io/badge/Orchestration-Airflow-green) ![Docker](https://img.shields.io/badge/Container-Docker-blue)
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red) ![Airflow](https://img.shields.io/badge/Orchestration-Airflow-green) ![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791) ![AWS](https://img.shields.io/badge/Cloud-AWS-FF9900) ![Docker](https://img.shields.io/badge/Container-Docker-2496ED)
 
 ---
 
 ## 📖 Project Overview
 
-Commercial utility bills are complex, and manual auditing is prone to errors. **Utility Billing AI** is an automated pipeline that ingests raw utility bills (PDFs) and Tariff documents, extracts structured data using LLMs, and validates charges against official rate cards to detect discrepancies.
+Commercial utility bills are complex documents with multiple rate tiers, surcharges, and taxes. Manual auditing is time-consuming and error-prone, leading to undetected overcharges costing businesses thousands of dollars annually.
 
-This project utilizes a **Multi-Agent Architecture** to handle distinct tasks like document extraction, rule processing, and financial comparison.
+**The Agentic Auditor** is an automated, AI-powered solution that:
+- ✅ Extracts data from utility bill PDFs automatically
+- ✅ Parses tariff documents to understand billing rules
+- ✅ Calculates what customers *should* be charged based on official tariffs
+- ✅ Detects discrepancies and overcharges with precision
+- ✅ Generates comprehensive audit reports
+
+This system leverages a **Multi-Agent Architecture** with **LLM-powered intelligent components** orchestrated by **Apache Airflow**, making it enterprise-ready and scalable.
+
+---
+
+## 🎯 Problem & Solution
+
+### **The Problem**
+- 📊 Utility bills contain complex rate structures (tier 1, tier 2, surcharges, taxes)
+- 🧑‍💼 Manual auditing takes hours per bill and is prone to human error
+- 💸 Overcharges often go unnoticed, costing businesses money
+- 📈 At scale, businesses cannot manually audit thousands of bills
+
+### **The Solution**
+- 🤖 **Automated Extraction**: AI-powered PDF parsing extracts all billing data
+- 🧠 **LLM Analysis**: OpenAI GPT models understand complex tariff rules
+- 🔢 **Automated Calculation**: Recalculates charges based on official tariffs
+- 🚨 **Anomaly Detection**: Flags overcharges and discrepancies automatically
+- 📋 **Reporting**: Generates detailed audit reports with visualizations
 
 ---
 
 ## 🏗️ System Architecture
 
-The application is built on a micro-component architecture orchestrated by **Apache Airflow**:
+### **Layered Architecture**
 
-1.  **Frontend (Streamlit):** User interface for uploading bills and viewing audit reports.
-2.  **Orchestrator (Airflow):** Manages the dependency pipeline (Extraction $\rightarrow$ Analysis $\rightarrow$ Reporting).
-3.  **Agentic Core (`src/agents`):**
-    * **Document Processor:** Extracts consumption and cost data from PDF bills.
-    * **Tariff Analyzer:** Parses complex tariff documents (PDF/Text) to extract billing rules and rates.
-    * **Bill Validator:** Cross-checks extracted bill data against calculated expected costs.
-    * **Error Detector:** Flags anomalies, missing data, or threshold breaches.
-4.  **Database:** Stores processed bills, tariff definitions, and audit results.
+```
+┌──────────────────────────────────────────────────────────┐
+│           FRONTEND (Streamlit UI - "The Agentic Auditor") │
+│  ✓ Login/Authentication                                  │
+│  ✓ Dashboard with 6 navigation cards                     │
+│  ✓ File upload interface                                 │
+│  ✓ Bill viewer and audit results                         │
+│  ✓ Report generation                                     │
+└─────────────────────┬──────────────────────────────────┘
+                      │
+┌─────────────────────v──────────────────────────────────┐
+│      ORCHESTRATOR (Apache Airflow 3.1)                  │
+│  ✓ tariff_pipeline DAG (3 sequential tasks)             │
+│  ✓ Dependency management                                │
+│  ✓ REST API for task triggering                         │
+│  ✓ Execution logging and monitoring                     │
+└─────────────────────┬──────────────────────────────────┘
+                      │
+┌─────────────────────v──────────────────────────────────┐
+│    AGENTIC CORE (Multi-Agent System)                    │
+│                                                         │
+│  1️⃣  Document Processor Agent                           │
+│      └─ PDF text extraction (pdfplumber)                │
+│      └─ Table extraction (camelot)                      │
+│      └─ Data validation                                 │
+│                                                         │
+│  2️⃣  Tariff Analyzer Agent                              │
+│      └─ Parse Service Classification (SC) documents     │
+│      └─ Extract rate structures                         │
+│      └─ Group tariffs by service class                  │
+│                                                         │
+│  3️⃣  Logic Extractor Agent (LLM)                        │
+│      └─ OpenAI GPT-4o-mini analysis                     │
+│      └─ Understanding billing rules                     │
+│      └─ Structured rule output                          │
+│                                                         │
+│  4️⃣  Bill Validator Agent                               │
+│      └─ Compare calculated vs actual charges            │
+│      └─ Detect overcharges                              │
+│      └─ Threshold-based anomaly detection               │
+│                                                         │
+│  5️⃣  Error Detector Agent                               │
+│      └─ Validate data completeness                      │
+│      └─ Flag missing/invalid fields                     │
+│      └─ Consistency checks                              │
+│                                                         │
+│  6️⃣  Report Generator Agent                             │
+│      └─ Create audit reports                            │
+│      └─ Export to PDF/CSV                               │
+│      └─ Summary statistics                              │
+└─────────────────────┬──────────────────────────────────┘
+                      │
+┌─────────────────────v──────────────────────────────────┐
+│           DATA LAYER                                    │
+│                                                         │
+│  Database (PostgreSQL RDS)                              │
+│  ├─ user_bills                                          │
+│  ├─ bill_validation_result                              │
+│  ├─ tariff_logic_versions                               │
+│  └─ audit_reports                                       │
+│                                                         │
+│  File Storage (AWS S3)                                  │
+│  ├─ raw_extracted_tarif.json                            │
+│  ├─ grouped_tariffs.json                                │
+│  ├─ final_logic_output.json                             │
+│  └─ audit_reports (PDF/CSV)                             │
+└──────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 🚀 Key Features
+## 🎮 User Interface Pages
 
-* **📄 Automated PDF Extraction:** Converts messy utility bill PDFs into structured CSV/JSON data using AI.
-* **⚖️ Tariff Rule Engine:** Intelligent parsing of "Service Classification" (SC) documents to understand rate structures.
-* **🔍 Overcharge Detection:** Automatically compares the *billed amount* vs. the *calculated amount* based on official tariffs.
-* **📊 Interactive Dashboard:** Streamlit-based UI to visualize usage trends and audit summaries.
-* **⚡ Airflow Pipelines:** Robust DAGs for handling full extraction and validation workflows.
+The Streamlit frontend provides an intuitive dashboard with **6 main pages**:
+
+### **🏠 Home Dashboard**
+- Welcome screen with animated cards
+- Navigation to all features
+- Quick access to recent audits
+
+### **📁 Upload & Ingest**
+- Upload utility bill PDFs
+- Automatic data extraction
+- Preview extracted information
+- Store in database and S3
+
+### **📄 Audit Bills**
+- View all uploaded bills
+- See extracted bill information
+- Check validation results
+- View calculated vs. actual amounts
+- Identify overcharges with visual indicators
+
+### **📑 Manage Tariffs**
+- Upload tariff documents
+- View extracted tariff rules
+- Manage rate structures
+- Test tariff logic
+
+### **📊 Pipeline Status** (Coming Soon)
+- Real-time monitoring of DAG execution
+- Task progress tracking
+- Execution logs and error messages
+- Performance metrics
+
+### **📋 Generate Reports**
+- Create detailed audit reports
+- Export as PDF/CSV
+- Summary statistics
+- Overcharge breakdown
+- Historical trends
+
+### **📜 Upload History**
+- View all uploaded files
+- Track processing status
+- Reprocess files if needed
+- Download results
 
 ---
 
 ## 📂 Repository Structure
 
-```text
+```
 utility-billing-ai/
-├── airflow/                # Airflow DAGs and configuration
-├── app/                    # Streamlit frontend application
-│   ├── components/         # UI widgets (File Uploader, Reports Viewer)
-│   └── streamlit_app.py    # Main entry point for UI
-├── data/                   # Raw PDFs and processed JSON/CSV data
-├── src/                    # Core Application Logic
-│   ├── agents/             # AI Agents
-│   │   ├── bill_comparison/   # Logic to compare calculated vs actual
-│   │   ├── document_processor/# PDF extraction logic
-│   │   ├── tariff_analysis/   # LLM extraction of tariff rules
-│   │   └── validation/        # Data validation agents
-│   ├── database/           # DB Models and Utils
-│   ├── orchestrator/       # Task schedulers
-│   └── utils/              # LLM clients, logging, config
-├── docker-compose.yml      # Container orchestration
-└── requirements.txt        # Python dependencies
+│
+├── 📄 README.md                    # This file
+├── 📄 PROJECT_OVERVIEW.md          # Detailed project documentation
+├── 📦 requirements.txt             # Python dependencies
+├── 🐋 docker-compose.yml           # Container orchestration
+├── 🔧 .env.example                 # Environment variables template
+│
+├── 🌐 app/                         # Streamlit Frontend
+│   ├── 📄 streamlit_app.py         # Main entry point
+│   ├── 🎨 assets/                  # Images, logos
+│   ├── components/                 # UI Components
+│   │   ├── login.py                # Authentication page
+│   │   ├── dashboard.py            # Home dashboard with cards
+│   │   ├── home.py                 # Auth utilities
+│   │   ├── file_uploader.py        # Bill upload interface
+│   │   ├── user_bills_viewer.py    # Bills list & audit results
+│   │   ├── tariff_details_viewer.py# Tariff management
+│   │   ├── pipeline_monitor.py     # Coming soon placeholder
+│   │   ├── reports_viewer.py       # Report generation & viewing
+│   │   └── upload_history.py       # File history & reprocessing
+│
+├── 🤖 src/                         # Core Application Logic
+│   ├── agents/                     # Multi-Agent System
+│   │   ├── document_processor/     # PDF Extraction Agent
+│   │   ├── tariff_analysis/        # Tariff Parser Agent
+│   │   ├── bill_comparison/        # Bill Validator Agent
+│   │   ├── error_detection/        # Error Detector Agent
+│   │   ├── reporting/              # Report Generator Agent
+│   │   └── validation/             # Data Validation
+│   ├── database/                   # Data Layer
+│   ├── orchestrator/               # Airflow Integration
+│   └── utils/                      # Utilities
+│
+├── 🌬️ airflow/                     # Apache Airflow
+│   ├── dags/                       # DAG definitions
+│   ├── logs/                       # Execution logs
+│   └── plugins/                    # Custom plugins
+│
+└── 📊 data/                        # Data Storage
+    ├── incoming/                   # Uploaded PDFs
+    ├── processed/                  # Results
+    └── samples/                    # Test files
+```
+
+---
+
+## 🔄 Complete Data Flow
+
+**USER UPLOADS BILL** → **EXTRACTION** → **TARIFF ANALYSIS** → **VALIDATION** → **REPORTING**
+
+```
+USER UPLOADS BILL (customer_oct_2024.pdf)
+    ↓
+STREAMLIT UI: Upload & Ingest Page
+    ↓
+AIRFLOW DAG: utility_billing_pipeline (3 Tasks)
+    ├─ TASK 1: Extract PDF Data
+    ├─ TASK 2: Group Tariffs by Service Class
+    └─ TASK 3: Extract Billing Logic (LLM)
+    ↓
+BILL VALIDATION AGENT
+    • Calculates expected charge
+    • Compares with actual bill
+    • Detects overcharge
+    ↓
+DATABASE STORAGE (PostgreSQL)
+    ↓
+USER VIEWS RESULTS (Audit Bills Page)
+    ↓
+GENERATE REPORT (PDF/CSV export)
+```
+
+See [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) for detailed workflow examples.
+
+---
+
+## 🚀 Key Features
+
+| Feature | Description | Benefits |
+|---------|-------------|----------|
+| **📄 Automated PDF Extraction** | AI-powered extraction of bill data from PDFs | Eliminates manual data entry |
+| **⚖️ Tariff Rule Engine** | Intelligent parsing of rate structures | Understands complex billing logic |
+| **🔍 Overcharge Detection** | Calculates expected vs actual charges | Identifies billing errors automatically |
+| **🧠 LLM-Powered Analysis** | Uses OpenAI GPT for intelligent processing | Handles complex, unstructured data |
+| **📊 Interactive Dashboard** | Streamlit UI with responsive design | Easy-to-use interface |
+| **⚡ Airflow Orchestration** | Robust DAG-based pipeline | Scalable, reliable workflow management |
+| **💾 PostgreSQL Database** | Persistent data storage | Reliable, queryable data |
+| **☁️ AWS S3 Integration** | Cloud file storage | Scalable, secure document management |
+| **📋 Report Generation** | Comprehensive audit reports | PDF/CSV export with visualizations |
+| **🔐 Authentication** | User login & session management | Secure access control |
+
+---
+
+## 🛠️ Technology Stack
+
+| Layer | Technology |
+|-------|-----------|
+| **Frontend** | Streamlit |
+| **Orchestration** | Apache Airflow 3.1 |
+| **LLM** | OpenAI API (GPT-4o-mini) |
+| **Database** | PostgreSQL (AWS RDS) |
+| **File Storage** | AWS S3 |
+| **PDF Processing** | pdfplumber, camelot |
+| **Containerization** | Docker & Docker Compose |
+| **Authentication** | JWT Tokens |
+
+---
+
+## 📋 Quick Start
+
+### **With Docker**
+```bash
+git clone https://github.com/harshalsp0011/utility-billing-ai.git
+cd utility-billing-ai
+cp .env.example .env
+# Edit .env with your AWS & OpenAI credentials
+docker-compose up -d
+# Access: http://localhost:8501
+```
+
+### **Local Development**
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+streamlit run app/streamlit_app.py
+```
+
+---
+
+## 📚 Documentation
+
+- **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** - Complete technical documentation
+- **[Airflow Documentation](https://airflow.apache.org/)**
+- **[Streamlit Docs](https://docs.streamlit.io/)**
+- **[OpenAI API](https://platform.openai.com/docs)**
+
+---
+
+## 🎓 Project Status
+
+✅ **Production Ready**
+- Core extraction pipeline working
+- Tariff rule parsing with LLM
+- Airflow orchestration (3-task DAG)
+- PostgreSQL database setup
+- Streamlit UI (6 pages)
+- AWS S3 integration
+- Authentication system
+- Multi-agent architecture
+
+---
+
+## 📞 Support
+
+- 📧 Email: support@agentic-auditor.com
+- 🐙 GitHub: [harshalsp0011/utility-billing-ai](https://github.com/harshalsp0011/utility-billing-ai)
+
+---
+
+**Last Updated**: December 7, 2025 | **Version**: 1.0.0 | **Status**: ✅ Production Ready
+
+<div align="center">
+
+Made with ❤️ by the Utility Billing AI Team
+
+⭐ If you find this helpful, give it a star!
+
+</div>
