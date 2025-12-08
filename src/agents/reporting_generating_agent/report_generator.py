@@ -261,9 +261,7 @@ class BillAuditReporter:
             }
             audit_results.append(audit_entry)
 
-            # persist validation result if variance or status suspicious
-            if abs(audit_entry["variance"]) > 0.05 or audit_entry["status"] != "SUCCESS":
-                self._persist_validation_result(audit_entry, account_number, db_bills)
+           
 
         logger.info("Audit generation complete.")
         self.last_results = audit_results
