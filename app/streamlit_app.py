@@ -43,7 +43,9 @@ except:
     logger = logging.getLogger(__name__)
 
 import streamlit as st
-from app.components.home import check_authentication, render_login_page, logout
+from app.components.home import check_authentication, logout
+from app.components.login import render_login_page
+from app.components.dashboard import render_dashboard
 
 # Initialize database on app startup
 @st.cache_resource
@@ -76,9 +78,39 @@ if not check_authentication():
     render_login_page()
     st.stop()  # Stop execution if not authenticated
 
-# -----------------------------------------------------
+# Add user info and logout button in the top right corner
+if "username" in st.session_state:
+    # Add custom CSS for logout button
+    st.markdown("""
+        <style>
+        div[data-testid="column"]:has(button[data-testid*="baseButton-secondary"]) button {
+            border: 2px solid #ff4b4b !important;
+            border-radius: 8px !important;
+            background-color: transparent !important;
+            color: #ff4b4b !important;
+            font-weight: 600 !important;
+            transition: all 0.3s ease !important;
+        }
+        div[data-testid="column"]:has(button[data-testid*="baseButton-secondary"]) button:hover {
+            background-color: #ff4b4b !important;
+            color: white !important;
+            border-color: #ff4b4b !important;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([2.8, 0.5, 0.3])
+    
+    with col3:
+        if st.button("Logout", key="logout_btn", use_container_width=True):
+            logout()
+    
+    with col2:
+        st.markdown(f"<div style='text-align: right; margin-top: 8px; font-size: 12px;'>{st.session_state.username}</div>", unsafe_allow_html=True)
+
+# --------- -----------------------------------------------
 # CUSTOM CSS - LOAD FROM EXTERNAL FILE
-# -----------------------------------------------------
+# --------- -----------------------------------------------
 css_path = project_root / "app/assets/sidebar_styles.css"
 if css_path.exists():
     with open(css_path, 'r') as f:
@@ -104,18 +136,8 @@ except Exception as e:
 
 st.sidebar.title("Troy & Banks – Utility Billing AI")
 
-# Show logged in user info
-if "username" in st.session_state:
-    st.sidebar.info(f"👤 Logged in as: **{st.session_state.username}**")
-
-# Logout button at the top of sidebar
-if st.sidebar.button("🚪 Logout", width='stretch', type="primary"):
-    logout()
-
 st.sidebar.markdown("---")
 
-# -----------------------------------------------------
-# NAVIGATION WITH ICONS
 # -----------------------------------------------------
 # Icon mapping for each page (Option B — Action-Oriented)
 page_icons = {
@@ -157,14 +179,44 @@ document.addEventListener('DOMContentLoaded', function() {
 # Create navigation with icon labels
 page_options = list(page_icons.keys())
 
-# Simple approach - show icon and text, CSS will handle visibility
-page = st.sidebar.radio(
-    "Navigation",
-    page_options,
-    format_func=lambda x: f"{page_icons[x]}  {x}",
-    key="nav_radio",
-    label_visibility="collapsed"
-)
+# Initialize nav_state in session state if not present
+if "nav_state" not in st.session_state:
+    st.session_state.nav_state = "home"
+
+# Check if on home
+show_home = st.session_state.nav_state == "home"
+
+# Show sidebar navigation only if not on home
+if not show_home:
+    # Navigation section
+    st.sidebar.markdown("### 📍 Navigation")
+    default_index = page_options.index(st.session_state.nav_state) if st.session_state.nav_state in page_options else 0
+    selected_page = st.sidebar.radio(
+        "Pages",
+        page_options,
+        index=default_index,
+        format_func=lambda x: f"{page_icons[x]}  {x}",
+        label_visibility="collapsed"
+    )
+    # Keep nav_state in sync with sidebar selection
+    if selected_page != st.session_state.nav_state:
+        st.session_state.nav_state = selected_page
+    
+    st.sidebar.markdown("---")
+    
+    # Back to Home button
+    if st.sidebar.button("🏠 Back to Home", width='stretch'):
+        st.session_state.nav_state = "home"
+        st.rerun()
+    
+    page = selected_page
+else:
+    page = None
+
+# Show dashboard if on home page
+if show_home:
+    render_dashboard()
+    st.stop()
 
 # -----------------------------------------------------
 # ROUTING
