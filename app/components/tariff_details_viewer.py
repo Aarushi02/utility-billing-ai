@@ -66,7 +66,7 @@ def _render_logic_step(step):
 # MAIN STREAMLIT VIEW
 # ------------------------------------------
 def render_tariff_details_viewer():
-    st.title("📑 Utility Tariff Logic Viewer (DB Mode)")
+    st.title("📑 Utility Tariff Logic Viewer")
 
     # 1️⃣ LOAD SC CODES FROM DB
     sc_codes = get_distinct_sc_codes()
@@ -74,19 +74,26 @@ def render_tariff_details_viewer():
         st.error("No SC codes available in the database.")
         return
 
-    selected_sc = st.selectbox("Select Service Classification:", sc_codes)
-    st.markdown("---")
+    # ----------------------------------
+    # SIDE-BY-SIDE DROPDOWNS
+    # ----------------------------------
+    col1, col2 = st.columns([1, 1])
 
-    # 2️⃣ LOAD VERSIONS FOR SELECTED SC
+    with col1:
+        selected_sc = st.selectbox("Service Classification (SC):", sc_codes)
+
+    # 2️⃣ LOAD VERSIONS AFTER SC IS PICKED
     versions = get_versions_for_sc(selected_sc)
     if not versions:
         st.warning("No versions found for this SC code.")
         return
 
-    selected_version = st.selectbox(
-        f"Select Effective Date for {selected_sc}:",
-        versions
-    )
+    with col2:
+        selected_version = st.selectbox(
+            f"Effective Date for {selected_sc}:", 
+            versions
+        )
+
     st.markdown("---")
 
     # 3️⃣ FETCH LOGIC JSON FROM DB
