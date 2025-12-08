@@ -167,47 +167,91 @@ The Streamlit frontend provides an intuitive dashboard with **6 main pages**:
 ```
 utility-billing-ai/
 │
-├── 📄 README.md                    # This file
-├── 📄 PROJECT_OVERVIEW.md          # Detailed project documentation
-├── 📦 requirements.txt             # Python dependencies
-├── 🐋 docker-compose.yml           # Container orchestration
-├── 🔧 .env.example                 # Environment variables template
+├── 📄 README.md                           # This file
+├── 📄 PROJECT_OVERVIEW.md                 # Detailed project documentation
+├── 📦 requirements.txt                    # Python dependencies
+├── 🐋 docker-compose.yml                  # Container orchestration
+├── 🔧 .env.example                        # Environment variables template
+├── 🔒 LICENSE                             # Project license
 │
-├── 🌐 app/                         # Streamlit Frontend
-│   ├── 📄 streamlit_app.py         # Main entry point
-│   ├── 🎨 assets/                  # Images, logos
-│   ├── components/                 # UI Components
-│   │   ├── login.py                # Authentication page
-│   │   ├── dashboard.py            # Home dashboard with cards
-│   │   ├── home.py                 # Auth utilities
-│   │   ├── file_uploader.py        # Bill upload interface
-│   │   ├── user_bills_viewer.py    # Bills list & audit results
-│   │   ├── tariff_details_viewer.py# Tariff management
-│   │   ├── pipeline_monitor.py     # Coming soon placeholder
-│   │   ├── reports_viewer.py       # Report generation & viewing
-│   │   └── upload_history.py       # File history & reprocessing
+├── 🌐 app/                                # Streamlit Frontend
+│   ├── 📄 streamlit_app.py                # Main entry point & routing
+│   ├── 🎨 assets/                         # Images, logos, static files
+│   ├── utils/                             # Frontend utilities
+│   └── components/                        # UI Components
+│       ├── login.py                       # Authentication & login page
+│       ├── dashboard.py                   # Home dashboard with 6 cards
+│       ├── home.py                        # Home page utilities
+│       ├── file_uploader.py               # Bill & tariff upload interface
+│       ├── user_bills_viewer.py           # Bills list & audit results
+│       ├── tariff_details_viewer.py       # Tariff management & viewing
+│       ├── pipeline_monitor.py            # Pipeline status (coming soon)
+│       ├── reports_viewer.py              # Report generation & viewing
+│       ├── upload_history.py              # File history & reprocessing
+│       ├── airflow_trigger.py             # Airflow API integration
+│       └── workflow_*                     # Additional workflow components
 │
-├── 🤖 src/                         # Core Application Logic
-│   ├── agents/                     # Multi-Agent System
-│   │   ├── document_processor/     # PDF Extraction Agent
-│   │   ├── tariff_analysis/        # Tariff Parser Agent
-│   │   ├── bill_comparison/        # Bill Validator Agent
-│   │   ├── error_detection/        # Error Detector Agent
-│   │   ├── reporting/              # Report Generator Agent
-│   │   └── validation/             # Data Validation
-│   ├── database/                   # Data Layer
-│   ├── orchestrator/               # Airflow Integration
-│   └── utils/                      # Utilities
+├── 🤖 src/                                # Core Application Logic
+│   ├── agents/                            # Multi-Agent System (6 Agents)
+│   │   ├── document_processor_agent/      # PDF Extraction & Parsing
+│   │   │   └── utility_bill_doc_processor.py
+│   │   ├── tariff_analysis_agent/         # Tariff Rule Extraction
+│   │   │   ├── pagewise_text_extractor.py
+│   │   │   ├── group_extracted_raw_text.py
+│   │   │   ├── extract_logic_llm_call.py
+│   │   │   ├── prompts_to_extract_logic.py
+│   │   │   └── rule_db_loader.py
+│   │   ├── audit_calculation_agent/       # Bill Validation & Calculation
+│   │   │   ├── calculation_engine.py
+│   │   │   └── calc_engine_updated.py
+│   │   ├── billing_anomaly_detector_agent/# Overcharge Detection
+│   │   │   └── anomaly_detector_llm_call.py
+│   │   ├── reporting_generating_agent/    # Report Generation
+│   │   │   └── report_generator.py
+│   │   └── validation_agent/              # Data Validation
+│   │       └── tafiff_defination_validation.py
+│   ├── database/                          # Data Layer
+│   │   ├── db_utils.py                    # Database utilities
+│   │   ├── init_db.py                     # Database initialization
+│   │   └── models.py                      # SQLAlchemy ORM models
+│   ├── orchestrator/                      # Airflow Integration
+│   │   ├── pipeline_runner.py
+│   │   └── workflow_manager.py
+│   └── utils/                             # Core Utilities
+│       ├── config.py                      # Configuration management
+│       ├── data_paths.py                  # Data path constants
+│       ├── helpers.py                     # Helper functions
+│       ├── logger.py                      # Logging configuration
+│       ├── llm_client.py                  # OpenAI LLM client
+│       └── aws_app.py                     # AWS S3 integration
 │
-├── 🌬️ airflow/                     # Apache Airflow
-│   ├── dags/                       # DAG definitions
-│   ├── logs/                       # Execution logs
-│   └── plugins/                    # Custom plugins
+├── 🌬️ airflow/                            # Apache Airflow Orchestration
+│   ├── airflow.cfg                        # Airflow configuration
+│   ├── simple_auth_manager_passwords.json # Airflow auth (generated)
+│   ├── dags/                              # DAG definitions
+│   │   ├── utility_billing_dag.py         # Main billing pipeline (3 tasks)
+│   │   ├── tariff_pipeline_dag.py         # Tariff processing pipeline
+│   │   └── test_dag.py                    # Test/example DAG
+│   ├── logs/                              # Airflow execution logs
+│   │   ├── dag_processor/                 # DAG parsing logs
+│   │   └── scheduler/                     # Scheduler logs
+│   └── plugins/                           # Custom Airflow plugins
 │
-└── 📊 data/                        # Data Storage
-    ├── incoming/                   # Uploaded PDFs
-    ├── processed/                  # Results
-    └── samples/                    # Test files
+├── 📊 data/                               # Data Storage (Local)
+│   ├── incoming/                          # Uploaded PDFs (temporary)
+│   ├── raw/                               # Raw extracted data
+│   ├── processed/                         # Processed results
+│   ├── samples/                           # Test/sample files
+│   └── output/                            # Generated outputs
+│
+├── 📔 notebooks/                          # Jupyter Notebooks
+│   ├── exploration/                       # Data exploration notebooks
+│   └── testing/                           # Testing & debugging notebooks
+│
+└── ✅ tests/                              # Unit & Integration Tests
+    ├── test_db_connection.py
+    ├── test_parser_logic.py
+    └── test_error_detection.py
 ```
 
 ---
