@@ -1,49 +1,49 @@
-# report_viewer.py
+# reports_viewer.py
 
 import os
+import json
+import tempfile
 from io import BytesIO
+from datetime import datetime
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy import text
 
 from src.utils.logger import get_logger
 from src.utils.data_paths import get_file_path
-from src.database.db_utils import fetch_user_bills
+from src.database.db_utils import (
+    fetch_user_bills,
+    get_distinct_sc_codes,
+    get_engine,          # NEW: to query tariff_logic_versions
+)
 from src.agents.reporting_generating_agent.report_generator import BillAuditReporter
 
 logger = get_logger("AuditReportViewer")
 
 
+# ---------------------------------------------------------
+# Excel helper
+# ---------------------------------------------------------
 def _df_to_excel_bytes(df: pd.DataFrame, account_id: str | None) -> BytesIO:
-    """
-    Convert a DataFrame to an in-memory Excel file for download.
-    """
     output = BytesIO()
-    suffix = account_id if account_id else "all_accounts"
-    sheet_name = "Audit Results"
-
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name)
-
+        df.to_excel(writer, index=False, sheet_name="Audit Results")
     output.seek(0)
     return output
 
 
+# ---------------------------------------------------------
+# Accounts helper
+# ---------------------------------------------------------
 def _get_available_accounts() -> list[str]:
-    """
-    Fetch all user_bills from DB and return unique bill_account values.
-    """
     try:
         df = fetch_user_bills(account_id=None)
     except Exception as e:
         logger.error(f"Error fetching bills for account list: {e}")
         return []
 
-    if df is None or df.empty:
-        return []
-
-    if "bill_account" not in df.columns:
-        logger.warning("Column 'bill_account' missing in user_bills result.")
+    if df is None or df.empty or "bill_account" not in df.columns:
         return []
 
     accounts = (
@@ -54,122 +54,171 @@ def _get_available_accounts() -> list[str]:
         .unique()
         .tolist()
     )
-    accounts = [a for a in accounts if a]  # remove empty strings
+    accounts = [a for a in accounts if a]
     accounts.sort()
     return accounts
 
 
-def _get_account_read_years(account_id: str) -> list[int]:
+# ---------------------------------------------------------
+# Read-date range for an account
+# ---------------------------------------------------------
+def _get_account_read_date_range(account_id: str) -> tuple[datetime | None, datetime | None]:
     """
-    For a given account, fetch its bills and return the distinct years
-    present in the read_date column.
+    Return (min_read_date, max_read_date) for the given account,
+    based on user_bills.read_date.
     """
     try:
         df = fetch_user_bills(account_id=account_id)
     except Exception as e:
         logger.error(f"Error fetching bills for account {account_id}: {e}")
-        return []
+        return (None, None)
 
-    if df is None or df.empty:
-        logger.warning(f"No bills found for account {account_id}")
-        return []
-
-    if "read_date" not in df.columns:
-        logger.warning("Column 'read_date' missing in user_bills result.")
-        return []
+    if df is None or df.empty or "read_date" not in df.columns:
+        logger.warning(f"No readable dates for account {account_id}")
+        return (None, None)
 
     dates = pd.to_datetime(df["read_date"], errors="coerce")
-    years = (
-        dates.dropna()
-        .dt.year.astype("Int64")
-        .dropna()
-        .unique()
-        .tolist()
-    )
-    years = sorted(int(y) for y in years)
-    logger.info(f"Account {account_id} has bills in years: {years}")
-    return years
+    dates = dates.dropna()
+    if dates.empty:
+        return (None, None)
+
+    min_date = dates.min()
+    max_date = dates.max()
+    logger.info(f"Account {account_id} read_date range: {min_date} → {max_date}")
+    return (min_date, max_date)
 
 
-def _build_tariff_sources_for_account(account_id: str):
+# ---------------------------------------------------------
+# Build tariff JSON from DB (tariff_logic_versions)
+# ---------------------------------------------------------
+def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str:
     """
-    Decide which tariff JSON(s) to use for a given account based on the years
-    present in its read_date values.
+    Build a temporary JSON file containing the tariff logic for the given
+    account + service classification, by querying tariff_logic_versions.
 
-    NEW LOGIC ADDED:
-    - If tariff_definitions_{year}.json is missing in /processed,
-      automatically fall back to tariff_definitions.json.
+    Selection criteria:
+      - sc_code = selected SC
+      - effective_date <= max_read_date
+      - end_date IS NULL OR end_date >= min_read_date
+
+    The resulting list of logic objects is written to a temp .json file,
+    whose path is returned and passed into BillAuditReporter.
     """
+    sc_code = sc_code.strip().upper()
 
-    years = _get_account_read_years(account_id)
+    min_date, max_date = _get_account_read_date_range(account_id)
 
-    # Fallback: if years could not be determined
-    default_path = get_file_path("processed", "tariff_definitions.json")
-
-    if not years:
-        logger.warning(
-            "No valid years found for account. Falling back to default tariff_definitions.json"
-        )
-        return default_path
-
-    # --- SINGLE YEAR CASE ---
-    if len(years) == 1:
-        year = years[0]
-        year_file_name = f"tariff_definitions_{year}.json"
-        year_tariff_path = get_file_path("processed", year_file_name)
-
-        # NEW: Check if file exists
-        if not os.path.exists(year_tariff_path):
-            logger.warning(
-                f"Tariff file for year {year} not found: {year_tariff_path}. "
-                f"Falling back to default tariff_definitions.json."
+    engine = get_engine()
+    with engine.begin() as conn:
+        if min_date is not None and max_date is not None:
+            logger.info(
+                f"Querying tariff_logic_versions for SC={sc_code} overlapping "
+                f"account read_date range {min_date.date()}–{max_date.date()}"
             )
-            return default_path
-
-        logger.info(f"Using single-year tariff JSON: {year_tariff_path}")
-        return year_tariff_path
-
-    # --- MULTI-YEAR CASE ---
-    tariff_files = []
-    for year in years:
-        year_file_name = f"tariff_definitions_{year}.json"
-        year_tariff_path = get_file_path("processed", year_file_name)
-
-        if os.path.exists(year_tariff_path):
-            tariff_files.append(year_tariff_path)
+            query = text(
+                """
+                SELECT effective_date, end_date, logic_json
+                FROM tariff_logic_versions
+                WHERE sc_code = :sc
+                  AND effective_date <= :max_date
+                  AND (end_date IS NULL OR end_date >= :min_date)
+                ORDER BY effective_date
+                """
+            )
+            rows = conn.execute(
+                query,
+                {
+                    "sc": sc_code,
+                    "min_date": min_date.date(),
+                    "max_date": max_date.date(),
+                },
+            ).mappings().all()
         else:
+            # Fallback: use all versions for that SC
             logger.warning(
-                f"Tariff file for year {year} missing: {year_tariff_path}. "
-                f"Using default tariff_definitions.json instead."
+                "No valid read_date range detected; pulling ALL versions for this SC."
             )
-            tariff_files.append(default_path)
+            query = text(
+                """
+                SELECT effective_date, end_date, logic_json
+                FROM tariff_logic_versions
+                WHERE sc_code = :sc
+                ORDER BY effective_date
+                """
+            )
+            rows = conn.execute(query, {"sc": sc_code}).mappings().all()
+
+    if not rows:
+        raise RuntimeError(
+            f"No tariff_logic_versions rows found in DB for SC={sc_code} "
+            f"and the account's read_date range."
+        )
+
+    definitions: list[dict] = []
+    for r in rows:
+        raw_logic = r["logic_json"]
+        # logic_json might be stored as JSON or text; normalize to dict
+        if isinstance(raw_logic, str):
+            try:
+                logic_obj = json.loads(raw_logic)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse logic_json for SC={sc_code}: {e}")
+                continue
+        else:
+            logic_obj = raw_logic
+
+        # Ensure metadata contains DB effective_date / end_date / sc_code
+        metadata = logic_obj.get("metadata", {}) or {}
+        eff = r["effective_date"]
+        end = r["end_date"]
+
+        if eff is not None:
+            metadata.setdefault("effective_date", eff.isoformat())
+        if end is not None:
+            metadata.setdefault("end_date", end.isoformat())
+        metadata.setdefault("sc_code", sc_code)
+        logic_obj["metadata"] = metadata
+
+        definitions.append(logic_obj)
+
+    if not definitions:
+        raise RuntimeError(
+            f"All DB rows for SC={sc_code} failed to parse logic_json; nothing to use."
+        )
+
+    # Write combined definitions to a temp JSON file
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=f"tariff_{sc_code}_{account_id}_", suffix=".json"
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(definitions, f, indent=2)
 
     logger.info(
-        f"Account {account_id} spans multiple years {years}. "
-        f"Tariff sources resolved to: {tariff_files}"
+        f"Wrote {len(definitions)} tariff logic records for SC={sc_code} "
+        f"into temp file: {tmp_path}"
     )
-    return tariff_files
+    return tmp_path
 
 
+# ---------------------------------------------------------
+# MAIN STREAMLIT VIEW
+# ---------------------------------------------------------
 def render_report_viewer():
     """
     Streamlit page: Audit Report Viewer
 
-    - User selects an account number
-    - We determine if its bills span one or multiple years
-    - We choose the appropriate tariff JSON(s) based on effective dates / years
-    - We run BillAuditReporter.generate_audit(account_id=...)
-    - Show the text report and tabular results
-    - Provide an Excel download button
+    - User selects account number
+    - User selects SC code from dropdown (from DB)
+    - We pull matching logic_json rows from tariff_logic_versions based on
+      sc_code and the account's bill read_date range.
+    - We combine them into a temp JSON file and hand that to BillAuditReporter.
+    - We show the text report + tabular results and allow Excel download.
     """
 
     st.title("🧾 Audit Report Viewer")
 
-    # ---------------------------------------------------------
-    # 1. Account Selection
-    # ---------------------------------------------------------
+    # 1️⃣ Account selection
     accounts = _get_available_accounts()
-
     if not accounts:
         st.warning("No account numbers found in user_bills.")
         return
@@ -181,43 +230,48 @@ def render_report_viewer():
         help="Choose an account to generate and view its audit report.",
     )
 
+    # 2️⃣ SC selection from DB
+    sc_codes = get_distinct_sc_codes()
+    if not sc_codes:
+        st.error("No Service Classification (SC) codes available in the database.")
+        return
+
+    selected_sc = st.selectbox(
+        "Service Classification (SC):",
+        options=sc_codes,
+        help="SC codes are loaded from tariff_logic_versions in the DB.",
+    )
+
     run_audit = st.button("Run Audit for Selected Account")
 
     if not run_audit:
-        st.info("Select an account and click **Run Audit for Selected Account**.")
+        st.info("Select an account and SC, then click **Run Audit for Selected Account**.")
         return
 
-    # ---------------------------------------------------------
-    # 2. Decide which tariff JSON(s) to use for this account
-    #    based on the years in its read_date values.
-    # ---------------------------------------------------------
-    tariff_source = _build_tariff_sources_for_account(selected_account)
-
-    # Helpful UI hint for you / reviewers
-    if isinstance(tariff_source, list):
-        st.caption(
-            f"Detected bills across multiple years. "
-            f"Using year-specific tariff definitions: {', '.join(os.path.basename(p) for p in tariff_source)}"
+    # 3️⃣ Build tariff JSON from DB (sc_code + effective_date range)
+    try:
+        tariff_json_path = _build_tariff_json_from_db_for_account(
+            selected_account, selected_sc
         )
-    else:
-        st.caption(
-            f"Detected bills in a single year. "
-            f"Using tariff definitions file: {os.path.basename(tariff_source)}"
-        )
+    except Exception as e:
+        st.error(f"Failed to build tariff definitions from DB: {e}")
+        logger.exception("Error building tariff JSON from DB")
+        return
 
-    # ---------------------------------------------------------
-    # 3. Initialize BillAuditReporter
-    #    (supports either a single file path or a list of paths)
-    # ---------------------------------------------------------
-    reporter = BillAuditReporter(tariff_source)
+    st.caption(
+        f"Using tariff logic from database for SC **{selected_sc}**, "
+        f"filtered by this account's bill read dates."
+    )
 
-    # ---------------------------------------------------------
-    # 4. Run audit for the chosen account
-    # ---------------------------------------------------------
-    with st.spinner(f"Running audit for account {selected_account}..."):
+    # 4️⃣ Run audit via BillAuditReporter
+    reporter = BillAuditReporter(tariff_json_path, default_sc=selected_sc)
+
+
+    with st.spinner(
+        f"Running audit for account {selected_account} under {selected_sc}..."
+    ):
         text_report = reporter.generate_audit(account_id=selected_account)
 
-    # If something went wrong, the reporter returns an error string
     if text_report.startswith("Error"):
         st.error(text_report)
         return
@@ -225,7 +279,6 @@ def render_report_viewer():
         st.warning(text_report)
         return
 
-    # Convert last_results (list of dicts) into DataFrame
     results = reporter.last_results or []
     if not results:
         st.info("Audit completed, but no results were produced.")
@@ -233,11 +286,8 @@ def render_report_viewer():
 
     results_df = pd.DataFrame(results)
 
-    # ---------------------------------------------------------
-    # 5. Show text report + DataFrame preview
-    # ---------------------------------------------------------
+    # 5️⃣ Show report + table
     st.subheader("📄 Audit Text Report")
-    st.caption("This is the same human-readable report your CLI script prints.")
     st.text_area(
         "Report",
         value=text_report,
@@ -246,26 +296,20 @@ def render_report_viewer():
     )
 
     st.subheader("🔍 Audit Results Table")
-    st.caption(
-        "Tabular view of per-bill audit results. Scroll horizontally/vertically to inspect."
-    )
-
-    # Optional: hide verbose columns like `trace` from the main preview
     preview_df = results_df.copy()
     if "trace" in preview_df.columns:
         preview_df = preview_df.drop(columns=["trace"])
+    st.dataframe(preview_df, width="stretch")
 
-    st.dataframe(preview_df, width='stretch')
-
-    # ---------------------------------------------------------
-    # 6. Download as Excel
-    # ---------------------------------------------------------
+    # 6️⃣ Download as Excel
     excel_bytes = _df_to_excel_bytes(results_df, selected_account)
-
     st.download_button(
         label="⬇️ Download Audit Report (Excel)",
         data=excel_bytes,
         file_name=f"final_audit_report_{selected_account}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        help="Download the full audit report (including trace column) as an Excel file.",
     )
+
+
+if __name__ == "__main__":
+    render_report_viewer()

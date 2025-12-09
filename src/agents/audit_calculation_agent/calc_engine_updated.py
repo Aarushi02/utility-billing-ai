@@ -141,6 +141,13 @@ def _parse_effective_date(raw: Optional[str]) -> Optional[date]:
         logger.warning(f"Could not parse effective_date: {raw!r}")
         return None
 
+def _extract_effective_date(item: dict) -> Optional[date]:
+        eff_raw = item.get("effective_date") or item.get("effective_from")
+        if not eff_raw:
+            md = item.get("metadata") or {}
+            eff_raw = md.get("effective_date") or md.get("effective_from")
+        return _parse_effective_date(eff_raw)
+
 
 class AuditEngine:
     """
@@ -160,7 +167,7 @@ class AuditEngine:
     # --------------------------------------------------------------------- #
     # Loading / mapping tariff JSON
     # --------------------------------------------------------------------- #
-
+    
     def _load_logic(self, path: str) -> Dict[str, List[dict]]:
         """
         Load tariff JSON. Supports:
@@ -184,12 +191,13 @@ class AuditEngine:
             for item in data:
                 raw_sc = item["sc_code"]
                 key = _normalize_sc_code(raw_sc)
-
-                eff_raw = item.get("effective_date") or item.get("effective_from")
-                eff_date = _parse_effective_date(eff_raw)
+                
+                # NEW: also look inside metadata for effective_date
+                eff_date = _extract_effective_date(item)
                 item["_effective_date"] = eff_date
 
                 mapping.setdefault(key, []).append(item)
+
 
             # Sort each list by effective_date ascending (None last)
             for key, items in mapping.items():
@@ -212,6 +220,7 @@ class AuditEngine:
         except Exception as e:
             logger.error(f"Failed to load logic file {path}: {e}")
             return {}
+        
 
     # --------------------------------------------------------------------- #
     # Tariff selection per bill
