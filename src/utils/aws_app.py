@@ -55,7 +55,7 @@ else:
             aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
             region_name=AWS_REGION
         )
-        logger.info(f"✅ S3 client initialized successfully with region: {AWS_REGION}")
+        logger.info(f"S3 client initialized successfully with region: {AWS_REGION}")
     except Exception as e:
         logger.error(f"Failed to initialize S3 client: {e}")
         s3_client = None

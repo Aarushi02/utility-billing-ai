@@ -1,7 +1,7 @@
 """
 db_utils.py
 ------------
-🗄️ Common database utility functions for interacting with the Utility Billing AI database.
+Common database utility functions for interacting with the Utility Billing AI database.
 
 Purpose:
 --------
@@ -31,7 +31,7 @@ from src.database.models import TariffDocument, TariffLogicVersion, LogEntry
 logger = get_logger(__name__)
 
 # ----------------------------------------------------------------------
-# 1️⃣ Setup Engine and Session Factory (Lazy-loaded)
+# 1) Setup engine and session factory (lazy-loaded)
 # ----------------------------------------------------------------------
 _engine = None
 _SessionLocal = None
@@ -52,7 +52,7 @@ def get_session():
 
 
 # ----------------------------------------------------------------------
-# 2a️⃣ Insert Log Entry
+# 2a) Insert log entry
 # ----------------------------------------------------------------------
 def insert_log_entry(level: str, description: str, message: str, logger_name: str = None, context: dict = None):
     """Insert a log record into the database.
@@ -84,7 +84,7 @@ def insert_log_entry(level: str, description: str, message: str, logger_name: st
         session.close()
 
 # ----------------------------------------------------------------------
-# 2️⃣ Insert Functions
+# 2) Insert functions
 # ----------------------------------------------------------------------
 def insert_raw_bill_document(metadata: dict):
     """
@@ -104,10 +104,10 @@ def insert_raw_bill_document(metadata: dict):
         
         session.add(doc)
         session.commit()
-        logger.info(f"📄 Inserted raw document: {metadata.get('file_name')} (id={doc.id})")
+        logger.info(f"Inserted raw document: {metadata.get('file_name')} (id={doc.id})")
         return doc.id
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to insert raw document: {e}")
+        logger.error(f"Failed to insert raw document: {e}")
         session.rollback()
         return None
     finally:
@@ -116,7 +116,7 @@ def insert_raw_bill_document(metadata: dict):
 
 
 # ----------------------------------------------------------------------
-# 3️⃣ Fetch Functions
+# 3) Fetch functions
 # ----------------------------------------------------------------------
 def fetch_all_raw_bill_docs():
     """Returns a list of all raw documents."""
@@ -124,10 +124,10 @@ def fetch_all_raw_bill_docs():
     session = get_session()
     try:
         results = session.query(RawBillDocument).all()
-        logger.info(f"📂 Retrieved {len(results)} raw documents.")
+        logger.info(f"Retrieved {len(results)} raw documents.")
         return results
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to fetch raw docs: {e}")
+        logger.error(f"Failed to fetch raw docs: {e}")
         return []
     finally:
         logger.info("end of fetch_all_raw_bill_docs")
@@ -135,7 +135,7 @@ def fetch_all_raw_bill_docs():
 
 
 # ----------------------------------------------------------------------
-# 4️⃣ Update Functions
+# 4) Update functions
 # ----------------------------------------------------------------------
 def update_document_status(file_name: str, new_status: str):
     """
@@ -147,18 +147,18 @@ def update_document_status(file_name: str, new_status: str):
         if doc:
             doc.status = new_status
             session.commit()
-            logger.info(f"🔄 Updated status for {file_name} → {new_status}")
+            logger.info(f"Updated status for {file_name} -> {new_status}")
         else:
-            logger.warning(f"⚠️ Document {file_name} not found in DB.")
+            logger.warning(f"Document {file_name} not found in DB.")
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to update status for {file_name}: {e}")
+        logger.error(f"Failed to update status for {file_name}: {e}")
         session.rollback()
     finally:
         session.close()
 
 
 # ----------------------------------------------------------------------
-# 6️⃣ Pipeline Run Management
+# 6) Pipeline run management
 # ----------------------------------------------------------------------
 
 def start_pipeline_run(dag_id: str):
@@ -171,10 +171,10 @@ def start_pipeline_run(dag_id: str):
         run = PipelineRun(dag_id=dag_id, status="running")
         session.add(run)
         session.commit()
-        logger.info(f"🟢 Started pipeline run {run.id} for {dag_id}")
+        logger.info(f"Started pipeline run {run.id} for {dag_id}")
         return run.id
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to start pipeline run: {e}")
+        logger.error(f"Failed to start pipeline run: {e}")
         session.rollback()
         return None
     finally:
@@ -197,11 +197,11 @@ def update_pipeline_run(run_id: int, status: str, error_msg: str = None):
                 run.total_runtime = int((run.end_time - run.start_time).total_seconds())
             run.error_msg = error_msg
             session.commit()
-            logger.info(f"🔄 Updated pipeline run {run_id} → {status}")
+            logger.info(f"Updated pipeline run {run_id} -> {status}")
         else:
-            logger.warning(f"⚠️ Pipeline run {run_id} not found.")
+            logger.warning(f"Pipeline run {run_id} not found.")
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to update pipeline run {run_id}: {e}")
+        logger.error(f"Failed to update pipeline run {run_id}: {e}")
         session.rollback()
     finally:
         logger.info("end of update_pipeline_run")
@@ -233,10 +233,10 @@ def insert_user_bill(record: dict, raw_bill_document_id: int = None):
         session.add(bill)
         session.commit()
         bill_account = record.get('bill_account')
-        logger.info(f"📄 Inserted UserBills record for Account {bill_account} (raw_doc_id={raw_bill_document_id})")
+        logger.info(f"Inserted UserBills record for Account {bill_account} (raw_doc_id={raw_bill_document_id})")
         return bill_account
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to insert UserBills record: {e}")
+        logger.error(f"Failed to insert UserBills record: {e}")
         session.rollback()
         return None
     finally:
@@ -281,9 +281,9 @@ def insert_user_bills_bulk(df: pd.DataFrame):
             except Exception:
                 pass
         df.to_sql("user_bills", get_engine(), if_exists="append", index=False, method="multi")
-        logger.info(f"💾 Inserted {len(df)} rows into UserBills table.")
+        logger.info(f"Inserted {len(df)} rows into UserBills table.")
     except Exception as e:
-        logger.error(f"❌ Failed to insert UserBills bulk: {e}")
+        logger.error(f"Failed to insert UserBills bulk: {e}")
     finally:
         logger.info("end of insert_user_bills_bulk")
         session.close()
@@ -332,11 +332,11 @@ def fetch_user_bills(account_id: Optional[str] = None):
         ]
         
         df = pd.DataFrame(data)
-        logger.info(f"📊 Fetched {len(df)} UserBills rows.")
+        logger.info(f"Fetched {len(df)} UserBills rows.")
         return df
 
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to fetch UserBills: {e}")
+        logger.error(f"Failed to fetch UserBills: {e}")
         return pd.DataFrame()
 
     finally:
@@ -357,11 +357,11 @@ def fetch_all_account_numbers():
         # Extract the account values from the result tuples
         account_list = [account[0] for account in accounts if account[0]]
 
-        logger.info(f"📌 Found {len(account_list)} distinct account numbers.")
+        logger.info(f"Found {len(account_list)} distinct account numbers.")
         return account_list
 
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to fetch account numbers: {e}")
+        logger.error(f"Failed to fetch account numbers: {e}")
         # Return empty list instead of crashing - tables might not exist yet
         return []
 
@@ -427,11 +427,11 @@ def fetch_bill_validation_results(
 
         results = query.order_by(BillValidationResult.detected_on.desc()).limit(limit).all()
 
-        logger.info(f"📊 Retrieved {len(results)} bill validation results.")
+        logger.info(f"Retrieved {len(results)} bill validation results.")
         return results
 
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to fetch bill validation results: {e}")
+        logger.error(f"Failed to fetch bill validation results: {e}")
         return []
     finally:
         logger.info("end of fetch_bill_validation_results")
@@ -453,12 +453,12 @@ def update_bill_validation_result(result_id: int, updates: dict):
                 setattr(result, key, value)
 
             session.commit()
-            logger.info(f"🔄 Updated BillValidationResult id={result_id}")
+            logger.info(f"Updated BillValidationResult id={result_id}")
         else:
-            logger.warning(f"⚠️ BillValidationResult id={result_id} not found.")
+            logger.warning(f"BillValidationResult id={result_id} not found.")
 
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to update BillValidationResult {result_id}: {e}")
+        logger.error(f"Failed to update BillValidationResult {result_id}: {e}")
         session.rollback()
     finally:
         logger.info("end of update_bill_validation_result")
@@ -540,11 +540,11 @@ def fetch_user_bills_with_issues(account_id: str, issue_type: Optional[str] = No
         ]
         
         df = pd.DataFrame(data)
-        logger.info(f"⚠️ Found {len(df)} bills WITH issues for account {account_id}.")
+        logger.info(f"Found {len(df)} bills with issues for account {account_id}.")
         return df
 
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to fetch bills with issues: {e}")
+        logger.error(f"Failed to fetch bills with issues: {e}")
         return pd.DataFrame()
 
     finally:
@@ -553,7 +553,7 @@ def fetch_user_bills_with_issues(account_id: str, issue_type: Optional[str] = No
 
 
 # ----------------------------------------------------------------------
-# 7️⃣ Tariff Version & Logic Management (ORM, session.query)
+# 7) Tariff version and logic management (ORM, session.query)
 # ----------------------------------------------------------------------
 
 def register_tariff_document(filename: str, utility_name: str, document_version: Optional[str] = None, description: Optional[str] = None, raw_bill_document_id: int = None) -> int:
@@ -600,11 +600,11 @@ def register_tariff_document(filename: str, utility_name: str, document_version:
             )
             session.add(doc)
         session.commit()
-        logger.info(f"📄 Registered tariff document id={doc.id} filename={filename} (raw_doc_id={raw_bill_document_id})")
+        logger.info(f"Registered tariff document id={doc.id} filename={filename} (raw_doc_id={raw_bill_document_id})")
         return doc.id
     except SQLAlchemyError as e:
         session.rollback()
-        logger.error(f"❌ Failed to register tariff document: {e}")
+        logger.error(f"Failed to register tariff document: {e}")
         raise
     finally:
         logger.info("end of register_tariff_document")
@@ -661,7 +661,7 @@ def save_tariff_logic_version(doc_id: int, logic_item: dict) -> bool:
             session.add(new_ver)
 
         session.commit()
-        logger.info(f"💾 Saved tariff logic version sc={sc_code} eff={effective_date}")
+        logger.info(f"Saved tariff logic version sc={sc_code} eff={effective_date}")
         return True
     except SQLAlchemyError as e:
         session.rollback()
@@ -792,7 +792,7 @@ def fetch_logic_for_audit(sc_code: str, bill_date: Union[str, datetime.date]) ->
 
         return result.logic_json if result else None
     except SQLAlchemyError as e:
-        logger.error(f"❌ Failed to fetch logic for audit: {e}")
+        logger.error(f"Failed to fetch logic for audit: {e}")
         return None
     finally:
         logger.info("end of fetch_logic_for_audit")

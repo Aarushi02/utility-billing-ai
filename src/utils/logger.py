@@ -1,20 +1,20 @@
 """
 logger.py
 ----------
-📄 Centralized logging utility for the Utility Billing AI System.
+Centralized logging utility for the Utility Billing AI System.
 
 Purpose:
---------
+---------
 Provides a consistent logging setup for all agents (document processing,
 tariff analysis, error detection, etc.) to log events, errors, and actions.
 
 Outputs:
 ---------
-✅ Logs to console
-✅ Logs to file at /logs/utility_billing.log
+- Logs to console
+- Logs to file at /logs/utility_billing.log
 
 Usage Example:
----------------
+--------------
 from src.utils.logger import get_logger
 logger = get_logger(__name__)
 logger.info("DocumentProcessor started successfully.")
@@ -25,19 +25,19 @@ import logging
 from datetime import datetime
 
 # ----------------------------------------------------------------------
-# 1️⃣ Define log directory (auto-created if missing)
+# 1) Define log directory (auto-created if missing)
 # ----------------------------------------------------------------------
 BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../"))
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 os.makedirs(LOG_DIR, exist_ok=True)
 
 # ----------------------------------------------------------------------
-# 2️⃣ Define log file name (with timestamp rotation)
+# 2) Define log file name (with timestamp rotation)
 # ----------------------------------------------------------------------
 LOG_FILE = os.path.join(LOG_DIR, "utility_billing.log")
 
 # ----------------------------------------------------------------------
-# 3️⃣ Configure logging format
+# 3) Configure logging format
 # ----------------------------------------------------------------------
 LOG_FORMAT = "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
 DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -75,7 +75,7 @@ class DBLogHandler(logging.Handler):
             pass
 
 # ----------------------------------------------------------------------
-# 4️⃣ Logging setup function
+# 4) Logging setup function
 # ----------------------------------------------------------------------
 def get_logger(name: str = "utility-billing-ai") -> logging.Logger:
     """
@@ -111,11 +111,11 @@ def get_logger(name: str = "utility-billing-ai") -> logging.Logger:
     return logger
 
 # ----------------------------------------------------------------------
-# 5️⃣ Self-test block (runs only if executed directly)
+# 5) Self-test block (runs only if executed directly)
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     test_logger = get_logger("logger_test")
-    test_logger.info("✅ Logger initialized successfully.")
-    test_logger.warning("⚠️ This is a sample warning.")
-    test_logger.error("❌ Example error message.")
+    test_logger.info("Logger initialized successfully.")
+    test_logger.warning("This is a sample warning.")
+    test_logger.error("Example error message.")
     print(f"Logs saved to: {LOG_FILE}")

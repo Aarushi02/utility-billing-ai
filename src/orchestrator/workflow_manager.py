@@ -1,16 +1,16 @@
 """
 workflow_manager.py
 --------------------
-🧠 Master Orchestrator Agent — coordinates execution of all agents in the Utility Billing AI system.
+Master orchestrator that coordinates execution of all agents in the Utility Billing AI system.
 
 Purpose:
---------
+---------
 Controls the end-to-end data flow:
-    1️⃣ Document ingestion and parsing
-    2️⃣ Tariff rule extraction
-    3️⃣ Bill comparison and charge computation
-    4️⃣ Error detection and validation
-    5️⃣ Report generation
+    1) Document ingestion and parsing
+    2) Tariff rule extraction
+    3) Bill comparison and charge computation
+    4) Error detection and validation
+    5) Report generation
 
 It manages agent dependencies, error handling, and logging.
 
@@ -42,16 +42,16 @@ from src.database.db_utils import start_pipeline_run, update_pipeline_run
 logger = get_logger(__name__)
 
 # ----------------------------------------------------------------------
-# 1️⃣ Simulated Agent Runners (placeholder functions)
+# 1) Simulated Agent Runners (placeholder functions)
 # ----------------------------------------------------------------------
 
 def run_document_processor():
     """
     Placeholder for Document Processor Agent.
-    Reads a sample PDF → Extracts data → Saves to raw folder.
+    Reads a sample PDF -> extracts data -> saves to raw folder.
     """
     logger.info("start of document_processor")
-    logger.info("📄 Running Document Processor Agent...")
+    logger.info("Running Document Processor Agent...")
     #time.sleep(1)  # simulate time delay
 
     # Example metadata
@@ -64,7 +64,7 @@ def run_document_processor():
     }
     insert_raw_bill_document(metadata)
     logger.info("after calling of insert_raw_bill_document(metadata)")
-    logger.info("✅ Document Processor completed.")
+    logger.info("Document Processor completed.")
     logger.info("end of document_processor")
     return True
 
@@ -75,10 +75,10 @@ def run_tariff_analysis():
     Extracts rate rules and stores tariff table.
     """
     logger.info("start of run_tariff_analysis")
-    logger.info("💰 Running Tariff Analysis Agent...")
+    logger.info("Running Tariff Analysis Agent...")
 
     #time.sleep(1)
-    logger.info("✅ Tariff Analysis completed.")
+    logger.info("Tariff Analysis completed.")
     logger.info("end of run_tariff_analysis")
     return True
 
@@ -89,7 +89,7 @@ def run_bill_comparison():
     Compares actual bills vs tariff-based charges.
     """
     logger.info("start of run_bill_comparison")
-    logger.info("📊 Running Bill Comparison Agent...")
+    logger.info("Running Bill Comparison Agent...")
 
     #time.sleep(1)
 
@@ -106,7 +106,7 @@ def run_bill_comparison():
     save_csv(df, "processed", "comparison_results.csv")
     insert_processed_data(df)
     logger.info("after calling of insert_processed_data(df)")
-    logger.info("✅ Bill Comparison completed.")
+    logger.info("Bill Comparison completed.")
     logger.info("end of run_bill_comparison")
     return True
 
@@ -117,7 +117,7 @@ def run_error_detection():
     Identifies anomalies and inserts validation results.
     """
     logger.info("start of run_error_detection")
-    logger.info("🚨 Running Error Detection Agent...")
+    logger.info("Running Error Detection Agent...")
     #time.sleep(1)
 
     record = {
@@ -129,7 +129,7 @@ def run_error_detection():
     }
     insert_validation_result(record)
     logger.info("after calling of insert_validation_result(record)")
-    logger.info("✅ Error Detection completed.")
+    logger.info("Error Detection completed.")
     logger.info("end of run_error_detection")
     return True
 
@@ -140,15 +140,15 @@ def run_reporting():
     Generates summary report and saves output.
     """
     logger.info("start of run_reporting")
-    logger.info("📑 Running Reporting Agent...")
+    logger.info("Running Reporting Agent...")
     #time.sleep(1)
     report_path = get_file_path("output", "Error_Summary_2025_Q4.xlsx")
-    logger.info(f"📊 Report generated successfully → {report_path}")
+    logger.info(f"Report generated successfully -> {report_path}")
     logger.info("end of run_reporting")
     return True
 
 # ----------------------------------------------------------------------
-# 2️⃣ Main Orchestration Function
+# 2) Main Orchestration Function
 # ----------------------------------------------------------------------
 
 def run_full_workflow():
@@ -156,7 +156,7 @@ def run_full_workflow():
     Executes all agents sequentially and logs a pipeline_run entry.
     """
     
-    logger.info("🚀 Starting full Utility Billing AI workflow...")
+    logger.info("Starting full Utility Billing AI workflow...")
     run_id = start_pipeline_run("utility_billing_pipeline")
 
     try:
@@ -172,17 +172,17 @@ def run_full_workflow():
             raise Exception("Reporting failed")
 
         update_pipeline_run(run_id, "success")
-        logger.info(f"✅ Workflow completed successfully (Run ID {run_id})")
+        logger.info(f"Workflow completed successfully (Run ID {run_id})")
         logger.info("dagtest")
         return True
 
     except Exception as e:
         update_pipeline_run(run_id, "failed", str(e))
-        logger.error(f"❌ Workflow failed (Run ID {run_id}): {e}")
+        logger.error(f"Workflow failed (Run ID {run_id}): {e}")
         return False
 
 # ----------------------------------------------------------------------
-# 3️⃣ Entry Point
+# 3) Entry Point
 # ----------------------------------------------------------------------
 if __name__ == "__main__":
     run_full_workflow()

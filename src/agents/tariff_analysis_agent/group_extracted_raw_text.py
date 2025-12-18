@@ -36,14 +36,14 @@ def parse_effective_date(text_block):
     return None
 
 def group_tariffs_v3(input_file, output_file):
-    print(f"🔹 Loading {input_file} from S3...")
+    print(f"Loading {input_file} from S3...")
     
     # Load from S3 only
     s3_key_input = get_s3_key("processed", Path(input_file).name)
     data = download_json_from_s3(s3_key_input)
     
     if not data:
-        raise Exception(f"❌ Error: {input_file} not found in S3: {s3_key_input}")
+        raise Exception(f"Error: {input_file} not found in S3: {s3_key_input}")
 
     # Header Regex
     header_pattern = re.compile(
@@ -63,7 +63,7 @@ def group_tariffs_v3(input_file, output_file):
                  pages.append({'page_number': int(k) if k.isdigit() else 0, 'text': v['text']})
          pages.sort(key=lambda x: x['page_number'])
 
-    print(f"🔹 Scanning {len(pages)} pages...")
+    print(f"Scanning {len(pages)} pages...")
 
     for page in pages:
         text = page.get('text', "")
@@ -124,7 +124,7 @@ def group_tariffs_v3(input_file, output_file):
     s3_key_output = get_s3_key("processed", Path(output_file).name)
     upload_json_to_s3(grouped_data, s3_key_output)
     
-    print(f"✅ Grouping Complete. Uploaded to S3: {s3_key_output}")
+    print(f"Grouping complete. Uploaded to S3: {s3_key_output}")
 
 def _get_default_paths():
     root = Path(__file__).resolve().parents[3]

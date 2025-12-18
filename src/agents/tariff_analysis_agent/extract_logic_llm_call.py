@@ -133,7 +133,7 @@ def extract_tariff_logic_hybrid(input_file, output_file, raw_bill_document_id=No
                     # Validate Context (Prevent SC3 inside SC7)
                     extracted_code = item.get('sc_code', 'UNKNOWN')
                     if sc_code not in extracted_code and extracted_code not in sc_code:
-                         logger.warning(f"   [⚠️] Cross-Contamination Warning: {sc_code} vs {extracted_code}")
+                        logger.warning(f"   [Warning] Cross-Contamination detected: {sc_code} vs {extracted_code}")
 
                     # Add to file list
                     all_definitions_for_file.append(item)
@@ -155,7 +155,7 @@ def extract_tariff_logic_hybrid(input_file, output_file, raw_bill_document_id=No
     try:
         s3_key_output = get_s3_key("processed", Path(output_file).name)
         if upload_json_to_s3(all_definitions_for_file, s3_key_output):
-            logger.info(f"✅ Uploaded to S3: {s3_key_output}")
+            logger.info(f"Uploaded to S3: {s3_key_output}")
         else:
             raise Exception(f"Failed to upload to S3: {s3_key_output}")
     except Exception as e:

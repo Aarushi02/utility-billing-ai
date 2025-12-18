@@ -39,9 +39,9 @@ def load_tariffs_to_db(json_file_path, filename="NationalGrid_Tariff-NewYork.pdf
             save_tariff_logic_version(doc_id, entry)
             inserted_count += 1
 
-        logger.info(f"✅ Successfully loaded {inserted_count} historical logic entries.")
+        logger.info(f"Successfully loaded {inserted_count} historical logic entries.")
     except Exception as e:
-        logger.error(f"❌ Loader failed: {e}")
+        logger.error(f"Loader failed: {e}")
 
 if __name__ == "__main__":
     # Adjust path to match your project

@@ -42,7 +42,7 @@ except Exception as e:
 #     "account_id": "ACCT-9981",
 #     "user_bill_id": 4,
 #     "issue_type": "Usage Spike",
-#     "description": "KWh increased by 62% vs last month — anomaly detected.",
+#     "description": "KWh increased by 62% vs last month - anomaly detected.",
 #     "status": "open",
 # })
 
@@ -73,24 +73,24 @@ Fields you may see:
 - sales_tax_amount: float or null
 - is_holiday_month: boolean
 - is_municipality: boolean
-- load_factor: float (0–1)
+- load_factor: float (0-1)
 - notes: string (optional context)
 
 ------------------------------------------------------------
 IMPORTANT CLARIFICATIONS FOR SMALL LOADS / MUNICIPAL ACCOUNTS
 ------------------------------------------------------------
 
-• Many small-load accounts (SC-1, SC-1C, municipal buildings, parks, traffic signals)
-  have **no demand meter**, so:
-    → kw_demand = 0 is NORMAL and MUST NOT be flagged.
+- Many small-load accounts (SC-1, SC-1C, municipal buildings, parks, traffic signals)
+    have **no demand meter**, so:
+        -> kw_demand = 0 is NORMAL and MUST NOT be flagged.
 
-• Municipalities frequently have **NO SALES TAX**.
-  If is_municipality = true:
-    → Do NOT flag R4 (sales tax always zero).
+- Municipalities frequently have **NO SALES TAX**.
+    If is_municipality = true:
+        -> Do NOT flag R4 (sales tax always zero).
 
-• For small accounts with no demand meter:
-    → Load factor may be 0 or undefined; do NOT flag R5 unless
-      the account has meaningful >0 demand values in history.
+- For small accounts with no demand meter:
+        -> Load factor may be 0 or undefined; do NOT flag R5 unless
+            the account has meaningful >0 demand values in history.
 
 ------------------------------------------------------------
 RULES TO APPLY (FIRST-LOOK QC)
@@ -99,16 +99,16 @@ RULES TO APPLY (FIRST-LOOK QC)
 R1) Unusual spikes or drops in usage or charges (ROLLING 12-MONTH BASELINE)
     For each bill, compute the baseline ONLY from the **previous up to 12 months**:
 
-       • usage_baseline  = median(kwh_usage for previous ≤12 bills)
-       • charge_baseline = median(total_amount for previous ≤12 bills)
+       - usage_baseline  = median(kwh_usage for previous <=12 bills)
+       - charge_baseline = median(total_amount for previous <=12 bills)
 
     If fewer than 3 prior months exist, skip R1 for this bill.
 
-    A bill MUST be flagged if:
-       • kwh_usage      >= 1.50 * usage_baseline  → "R1_USAGE_SPIKE"
-       • kwh_usage      <= 0.50 * usage_baseline  → "R1_USAGE_DROP"
-       • total_amount   >= 1.50 * charge_baseline → "R1_CHARGE_SPIKE"
-       • total_amount   <= 0.50 * charge_baseline → "R1_CHARGE_DROP"
+     A bill MUST be flagged if:
+         - kwh_usage      >= 1.50 * usage_baseline  -> "R1_USAGE_SPIKE"
+         - kwh_usage      <= 0.50 * usage_baseline  -> "R1_USAGE_DROP"
+         - total_amount   >= 1.50 * charge_baseline -> "R1_CHARGE_SPIKE"
+         - total_amount   <= 0.50 * charge_baseline -> "R1_CHARGE_DROP"
 
     Apply this strictly to EVERY month independently.
     Do NOT use any future months when calculating the baseline.
@@ -129,19 +129,19 @@ R3) Zero, missing, or negative values
 R4) Sales tax always zero or missing
     - Apply ONLY IF is_municipality == false.
     - If the account normally has tax and most bills show zero or null:
-        → flag as "R4_SALES_TAX_SUSPECT".
+        -> flag as "R4_SALES_TAX_SUSPECT".
     - This is NOT an overcharge by itself; mark is_overcharge_risk = false.
 
 R5) Big swings in load factor or demand (ONLY if the account has non-zero demand)
     - If kw_demand > 0 at any point in history:
-         → compare load_factor or kw_demand swings ≥ 50%.
+        -> compare load_factor or kw_demand swings >= 50%.
     - If kw_demand is ALWAYS zero:
-         → skip R5 completely.
+        -> skip R5 completely.
     - rule_id: "R5_LOAD_FACTOR_SWING".
 
 R6) Repeated billing periods or duplicated charges
     - If two bills share identical period_start & period_end OR clearly duplicate:
-         → rule_id "R6_DUPLICATE_PERIOD", is_overcharge_risk = true.
+         -> rule_id "R6_DUPLICATE_PERIOD", is_overcharge_risk = true.
 
 ------------------------------------------------------------
 OUTPUT FORMAT (STRICT JSON)

@@ -19,10 +19,10 @@ class AuditEngine:
                 data = data['tariffs']
             
             mapping = {item['sc_code']: item for item in data}
-            logger.info(f"✅ Engine loaded logic for: {list(mapping.keys())}")
+            logger.info(f"Engine loaded logic for: {list(mapping.keys())}")
             return mapping
         except FileNotFoundError:
-            logger.error(f"❌ Logic file {path} not found.")
+            logger.error(f"Logic file {path} not found.")
             return {}
 
     def calculate_expected_bill(self, row: pd.Series):
@@ -70,7 +70,7 @@ class AuditEngine:
                     if not eval(condition, {"__builtins__": None}, eval_context):
                         continue
                 except Exception as e:
-                    logger.warning(f"⚠️ Condition Error in {step_name}: {e}")
+                    logger.warning(f"Condition error in {step_name}: {e}")
                     continue
 
             cost = 0.0
@@ -85,7 +85,7 @@ class AuditEngine:
                 trace_log.append(f"{step_name}: ${cost:.2f}")
 
             except Exception as e:
-                logger.error(f"❌ Math Error in {step_name}: {e}")
+                logger.error(f"Math error in {step_name}: {e}")
 
         actual_bill = float(row.get('bill_amount', 0.0) or 0.0)
         variance = total_expected - actual_bill

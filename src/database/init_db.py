@@ -8,10 +8,10 @@ def init_db():
     """
     Creates all tables defined in models.py inside the database.
     """
-    print("🔄 Connecting to database...")
+    print("Connecting to database...")
     engine = create_engine(DB_URL)
     Base.metadata.create_all(engine)
-    print("✅ Tables created successfully!")
+    print("Tables created successfully.")
 
     # Post-create safety migrations
     with engine.begin() as conn:
@@ -24,11 +24,11 @@ def init_db():
                   AND column_name = 'sc_code'
             """)).fetchone()
             if res and res[0] is not None and res[0] < 100:
-                print("🔧 Migrating column tariff_logic.sc_code to VARCHAR(100)...")
+                print("Migrating column tariff_logic.sc_code to VARCHAR(100)...")
                 conn.execute(text("ALTER TABLE tariff_logic ALTER COLUMN sc_code TYPE VARCHAR(100)"))
-                print("✅ Migration complete: sc_code widened to 100 chars")
+                print("Migration complete: sc_code widened to 100 chars")
         except Exception as e:
-            print(f"⚠️ Skipped sc_code migration: {e}")
+            print(f"Skipped sc_code migration: {e}")
 
 if __name__ == "__main__":
     init_db()
