@@ -71,3 +71,6 @@ AIRFLOW_DAG_ID = get_env("AIRFLOW_DAG_ID", "utility_billing_pipeline")
 # -------------------------
 OPENAI_API_KEY = get_env("OPENAI_API_KEY", "")
 OPENAI_MODEL = get_env("OPENAI_MODEL", "gpt-4o-mini")
+
+
+# -------------------------
