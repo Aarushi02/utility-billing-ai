@@ -25,10 +25,10 @@ logger = get_logger("AuditReportViewer")
 # ---------------------------------------------------------
 # Excel helper
 # ---------------------------------------------------------
-def _df_to_excel_bytes(df: pd.DataFrame, account_id: str | None) -> BytesIO:
+def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Audit Results") -> BytesIO:
     output = BytesIO()
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Audit Results")
+        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])  # Excel sheet name limit
     output.seek(0)
     return output
 
@@ -134,10 +134,7 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
                 },
             ).mappings().all()
         else:
-            # Fallback: use all versions for that SC
-            logger.warning(
-                "No valid read_date range detected; pulling ALL versions for this SC."
-            )
+            logger.warning("No valid read_date range detected; pulling ALL versions for this SC.")
             query = text(
                 """
                 SELECT effective_date, end_date, logic_json
@@ -157,7 +154,6 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     definitions: list[dict] = []
     for r in rows:
         raw_logic = r["logic_json"]
-        # logic_json might be stored as JSON or text; normalize to dict
         if isinstance(raw_logic, str):
             try:
                 logic_obj = json.loads(raw_logic)
@@ -167,7 +163,6 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
         else:
             logic_obj = raw_logic
 
-        # Ensure metadata contains DB effective_date / end_date / sc_code
         metadata = logic_obj.get("metadata", {}) or {}
         eff = r["effective_date"]
         end = r["end_date"]
@@ -186,18 +181,112 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
             f"All DB rows for SC={sc_code} failed to parse logic_json; nothing to use."
         )
 
-    # Write combined definitions to a temp JSON file
-    fd, tmp_path = tempfile.mkstemp(
-        prefix=f"tariff_{sc_code}_{account_id}_", suffix=".json"
-    )
+    fd, tmp_path = tempfile.mkstemp(prefix=f"tariff_{sc_code}_{account_id}_", suffix=".json")
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(definitions, f, indent=2)
 
     logger.info(
-        f"Wrote {len(definitions)} tariff logic records for SC={sc_code} "
-        f"into temp file: {tmp_path}"
+        f"Wrote {len(definitions)} tariff logic records for SC={sc_code} into temp file: {tmp_path}"
     )
     return tmp_path
+
+
+# ---------------------------------------------------------
+# 12-month window helpers
+# ---------------------------------------------------------
+def _detect_date_column(df: pd.DataFrame) -> str | None:
+    """
+    Prefer deterministic columns first; then fall back to anything containing 'date'.
+    """
+    if df is None or df.empty:
+        return None
+
+    preferred = [
+        "read_date",
+        "bill_date",
+        "date",  # your reporter currently emits this in many setups
+        "billing_date",
+        "period_start",
+        "start_date",
+        "service_start",
+        "invoice_date",
+    ]
+    for c in preferred:
+        if c in df.columns:
+            return c
+
+    for c in df.columns:
+        if "date" in c.lower():
+            return c
+
+    return None
+
+
+def _add_12_month_windows(df: pd.DataFrame, date_col: str) -> tuple[pd.DataFrame, list[dict]]:
+    """
+    Adds:
+      __bill_dt       parsed datetime
+      __bill_month    period[M]
+      __window_id     int (1..N)
+      __window_label  str
+    """
+    out = df.copy()
+    out["__bill_dt"] = pd.to_datetime(out[date_col], errors="coerce")
+    out = out.dropna(subset=["__bill_dt"]).copy()
+    if out.empty:
+        return out, []
+
+    out["__bill_month"] = out["__bill_dt"].dt.to_period("M")
+
+    min_month = out["__bill_month"].min()
+    min_idx = min_month.year * 12 + min_month.month
+
+    month_idx = out["__bill_month"].apply(lambda p: p.year * 12 + p.month)
+    out["__window_id"] = ((month_idx - min_idx) // 12).astype(int) + 1
+
+    windows = []
+    for wid in sorted(out["__window_id"].unique()):
+        w_df = out[out["__window_id"] == wid]
+        w_start = w_df["__bill_month"].min().to_timestamp(how="start").date()
+        w_end = w_df["__bill_month"].max().to_timestamp(how="end").date()
+        label = f"Window {wid}: {w_start} → {w_end}"
+        windows.append({"id": wid, "start": w_start, "end": w_end, "label": label})
+
+    out["__window_label"] = out["__window_id"].map({w["id"]: w["label"] for w in windows})
+    return out, windows
+
+
+def _compute_window_summary(df: pd.DataFrame) -> dict:
+    """
+    Works even if exact column names differ; uses simple heuristics.
+    """
+    summary = {"rows": int(len(df))}
+
+    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
+
+    likely_actual = [
+        c for c in numeric_cols
+        if "actual" in c.lower() and ("charge" in c.lower() or "total" in c.lower() or "amount" in c.lower())
+    ]
+    likely_calc = [
+        c for c in numeric_cols
+        if ("calc" in c.lower() or "recalc" in c.lower() or "calculated" in c.lower())
+        and ("charge" in c.lower() or "total" in c.lower() or "amount" in c.lower())
+    ]
+    likely_diff = [c for c in numeric_cols if ("diff" in c.lower() or "delta" in c.lower() or "variance" in c.lower())]
+
+    def _sum_first(cols: list[str]) -> float | None:
+        if not cols:
+            return None
+        try:
+            return float(pd.to_numeric(df[cols[0]], errors="coerce").fillna(0).sum())
+        except Exception:
+            return None
+
+    summary["sum_actual"] = _sum_first(likely_actual)
+    summary["sum_calculated"] = _sum_first(likely_calc)
+    summary["sum_difference"] = _sum_first(likely_diff)
+    return summary
 
 
 # ---------------------------------------------------------
@@ -213,6 +302,7 @@ def render_report_viewer():
       sc_code and the account's bill read_date range.
     - We combine them into a temp JSON file and hand that to BillAuditReporter.
     - We show the text report + tabular results and allow Excel download.
+    - NEW: View results in 12-month windows and download per window.
     """
 
     st.title("🧾 Audit Report Viewer")
@@ -250,9 +340,7 @@ def render_report_viewer():
 
     # 3️⃣ Build tariff JSON from DB (sc_code + effective_date range)
     try:
-        tariff_json_path = _build_tariff_json_from_db_for_account(
-            selected_account, selected_sc
-        )
+        tariff_json_path = _build_tariff_json_from_db_for_account(selected_account, selected_sc)
     except Exception as e:
         st.error(f"Failed to build tariff definitions from DB: {e}")
         logger.exception("Error building tariff JSON from DB")
@@ -266,10 +354,7 @@ def render_report_viewer():
     # 4️⃣ Run audit via BillAuditReporter
     reporter = BillAuditReporter(tariff_json_path, default_sc=selected_sc)
 
-
-    with st.spinner(
-        f"Running audit for account {selected_account} under {selected_sc}..."
-    ):
+    with st.spinner(f"Running audit for account {selected_account} under {selected_sc}..."):
         text_report = reporter.generate_audit(account_id=selected_account)
 
     if text_report.startswith("Error"):
@@ -286,8 +371,8 @@ def render_report_viewer():
 
     results_df = pd.DataFrame(results)
 
-    # 5️⃣ Show report + table
-    st.subheader("📄 Audit Text Report")
+    # 5️⃣ Overall report
+    st.subheader("📄 Audit Text Report (Overall)")
     st.text_area(
         "Report",
         value=text_report,
@@ -295,17 +380,74 @@ def render_report_viewer():
         label_visibility="collapsed",
     )
 
-    st.subheader("🔍 Audit Results Table")
-    preview_df = results_df.copy()
-    if "trace" in preview_df.columns:
-        preview_df = preview_df.drop(columns=["trace"])
-    st.dataframe(preview_df, width="stretch")
+    # --- Clean base table (drop trace) ---
+    base_df = results_df.copy()
+    if "trace" in base_df.columns:
+        base_df = base_df.drop(columns=["trace"])
 
-    # 6️⃣ Download as Excel
-    excel_bytes = _df_to_excel_bytes(results_df, selected_account)
+    # 6️⃣ NEW: 12-month viewing
+    st.subheader("🗓️ Calculation Report by 12-Month Windows")
+
+    date_col = _detect_date_column(base_df)
+    if not date_col:
+        st.warning(
+            "Could not detect a date column in the audit results (e.g., read_date, bill_date, date). "
+            "Add a date field to reporter.last_results to enable 12-month window viewing."
+        )
+    else:
+        windowed_df, windows = _add_12_month_windows(base_df, date_col=date_col)
+
+        if windowed_df.empty or not windows:
+            st.warning(
+                f"Detected `{date_col}`, but could not form 12-month windows (no valid dates after parsing)."
+            )
+        else:
+            st.caption(f"Windows derived from `{date_col}` (grouped by month into consecutive 12-month blocks).")
+
+            options = ["All results (no window filter)"] + [w["label"] for w in windows]
+            selected_window = st.selectbox("Select a 12-month window:", options=options, index=0)
+
+            if selected_window == "All results (no window filter)":
+                view_df = windowed_df.copy()
+                file_suffix = "ALL"
+                sheet_name = "All Results"
+            else:
+                view_df = windowed_df[windowed_df["__window_label"] == selected_window].copy()
+                file_suffix = selected_window.split(":")[0].replace(" ", "_").upper()
+                sheet_name = selected_window
+
+            # Summary metrics
+            summary = _compute_window_summary(view_df)
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Rows", f"{summary.get('rows', 0):,}")
+            c2.metric("Sum Actual", f"${summary['sum_actual']:,.2f}" if summary.get("sum_actual") is not None else "—")
+            c3.metric("Sum Calculated", f"${summary['sum_calculated']:,.2f}" if summary.get("sum_calculated") is not None else "—")
+            c4.metric("Sum Difference", f"${summary['sum_difference']:,.2f}" if summary.get("sum_difference") is not None else "—")
+
+            # Display table (remove internal window columns)
+            st.subheader("🔍 Window Results Table")
+            display_df = view_df.drop(
+                columns=[c for c in ["__bill_dt", "__bill_month", "__window_id", "__window_label"] if c in view_df.columns],
+                errors="ignore",
+            )
+            st.dataframe(display_df, width="stretch")
+
+            # Download this window
+            st.download_button(
+                label="⬇️ Download Selected Window (Excel)",
+                data=_df_to_excel_bytes(display_df, sheet_name=sheet_name),
+                file_name=f"final_audit_report_{selected_account}_{file_suffix}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
+
+    # 7️⃣ Keep overall table + overall download (existing behavior)
+    st.subheader("🔍 Audit Results Table (Overall)")
+    st.dataframe(base_df, width="stretch")
+
+    st.subheader("⬇️ Download Overall Audit (Excel)")
     st.download_button(
         label="⬇️ Download Audit Report (Excel)",
-        data=excel_bytes,
+        data=_df_to_excel_bytes(base_df, sheet_name="Overall Audit"),
         file_name=f"final_audit_report_{selected_account}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
