@@ -11,11 +11,10 @@ import streamlit as st
 from sqlalchemy import text
 
 from src.utils.logger import get_logger
-from src.utils.data_paths import get_file_path
 from src.database.db_utils import (
     fetch_user_bills,
     get_distinct_sc_codes,
-    get_engine,          # NEW: to query tariff_logic_versions
+    get_engine,  # query tariff_logic_versions
 )
 from src.agents.reporting_generating_agent.report_generator import BillAuditReporter
 
@@ -77,8 +76,7 @@ def _get_account_read_date_range(account_id: str) -> tuple[datetime | None, date
         logger.warning(f"No readable dates for account {account_id}")
         return (None, None)
 
-    dates = pd.to_datetime(df["read_date"], errors="coerce")
-    dates = dates.dropna()
+    dates = pd.to_datetime(df["read_date"], errors="coerce").dropna()
     if dates.empty:
         return (None, None)
 
@@ -93,28 +91,21 @@ def _get_account_read_date_range(account_id: str) -> tuple[datetime | None, date
 # ---------------------------------------------------------
 def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str:
     """
-    Build a temporary JSON file containing the tariff logic for the given
-    account + service classification, by querying tariff_logic_versions.
+    Build a temporary JSON file containing tariff logic for account + SC by querying tariff_logic_versions.
 
     Selection criteria:
       - sc_code = selected SC
       - effective_date <= max_read_date
       - end_date IS NULL OR end_date >= min_read_date
 
-    The resulting list of logic objects is written to a temp .json file,
-    whose path is returned and passed into BillAuditReporter.
+    Writes combined definitions into a temp .json and returns the path.
     """
     sc_code = sc_code.strip().upper()
-
     min_date, max_date = _get_account_read_date_range(account_id)
 
     engine = get_engine()
     with engine.begin() as conn:
         if min_date is not None and max_date is not None:
-            logger.info(
-                f"Querying tariff_logic_versions for SC={sc_code} overlapping "
-                f"account read_date range {min_date.date()}–{max_date.date()}"
-            )
             query = text(
                 """
                 SELECT effective_date, end_date, logic_json
@@ -127,11 +118,7 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
             )
             rows = conn.execute(
                 query,
-                {
-                    "sc": sc_code,
-                    "min_date": min_date.date(),
-                    "max_date": max_date.date(),
-                },
+                {"sc": sc_code, "min_date": min_date.date(), "max_date": max_date.date()},
             ).mappings().all()
         else:
             logger.warning("No valid read_date range detected; pulling ALL versions for this SC.")
@@ -154,6 +141,7 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     definitions: list[dict] = []
     for r in rows:
         raw_logic = r["logic_json"]
+
         if isinstance(raw_logic, str):
             try:
                 logic_obj = json.loads(raw_logic)
@@ -185,9 +173,7 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(definitions, f, indent=2)
 
-    logger.info(
-        f"Wrote {len(definitions)} tariff logic records for SC={sc_code} into temp file: {tmp_path}"
-    )
+    logger.info(f"Wrote {len(definitions)} tariff logic records for SC={sc_code} into temp file: {tmp_path}")
     return tmp_path
 
 
@@ -204,7 +190,7 @@ def _detect_date_column(df: pd.DataFrame) -> str | None:
     preferred = [
         "read_date",
         "bill_date",
-        "date",  # your reporter currently emits this in many setups
+        "date",  # common in your current outputs
         "billing_date",
         "period_start",
         "start_date",
@@ -258,34 +244,38 @@ def _add_12_month_windows(df: pd.DataFrame, date_col: str) -> tuple[pd.DataFrame
 
 def _compute_window_summary(df: pd.DataFrame) -> dict:
     """
-    Works even if exact column names differ; uses simple heuristics.
+    Deterministic summary for your schema:
+      - Sum Actual      = SUM(actual)      if present
+      - Sum Calculated  = SUM(expected)    if present (fallback to calculated if expected missing)
+      - Sum Difference  = SUM(variance)    if present, else SUM(actual-expected)
     """
     summary = {"rows": int(len(df))}
 
-    numeric_cols = [c for c in df.columns if pd.api.types.is_numeric_dtype(df[c])]
-
-    likely_actual = [
-        c for c in numeric_cols
-        if "actual" in c.lower() and ("charge" in c.lower() or "total" in c.lower() or "amount" in c.lower())
-    ]
-    likely_calc = [
-        c for c in numeric_cols
-        if ("calc" in c.lower() or "recalc" in c.lower() or "calculated" in c.lower())
-        and ("charge" in c.lower() or "total" in c.lower() or "amount" in c.lower())
-    ]
-    likely_diff = [c for c in numeric_cols if ("diff" in c.lower() or "delta" in c.lower() or "variance" in c.lower())]
-
-    def _sum_first(cols: list[str]) -> float | None:
-        if not cols:
+    def _sum(col: str) -> float | None:
+        if col not in df.columns:
             return None
-        try:
-            return float(pd.to_numeric(df[cols[0]], errors="coerce").fillna(0).sum())
-        except Exception:
-            return None
+        s = pd.to_numeric(df[col], errors="coerce").fillna(0).sum()
+        return float(s)
 
-    summary["sum_actual"] = _sum_first(likely_actual)
-    summary["sum_calculated"] = _sum_first(likely_calc)
-    summary["sum_difference"] = _sum_first(likely_diff)
+    # Your current output uses: actual, expected, variance
+    summary["sum_actual"] = _sum("actual") if "actual" in df.columns else None
+
+    if "expected" in df.columns:
+        summary["sum_calculated"] = _sum("expected")
+    elif "calculated" in df.columns:
+        summary["sum_calculated"] = _sum("calculated")
+    else:
+        summary["sum_calculated"] = None
+
+    if "variance" in df.columns:
+        summary["sum_difference"] = _sum("variance")
+    elif "actual" in df.columns and "expected" in df.columns:
+        a = pd.to_numeric(df["actual"], errors="coerce").fillna(0)
+        e = pd.to_numeric(df["expected"], errors="coerce").fillna(0)
+        summary["sum_difference"] = float((a - e).sum())
+    else:
+        summary["sum_difference"] = None
+
     return summary
 
 
@@ -294,20 +284,25 @@ def _compute_window_summary(df: pd.DataFrame) -> dict:
 # ---------------------------------------------------------
 def render_report_viewer():
     """
-    Streamlit page: Audit Report Viewer
+    Streamlit page: Audit Report Viewer (12-month window viewing)
 
-    - User selects account number
-    - User selects SC code from dropdown (from DB)
-    - We pull matching logic_json rows from tariff_logic_versions based on
-      sc_code and the account's bill read_date range.
-    - We combine them into a temp JSON file and hand that to BillAuditReporter.
-    - We show the text report + tabular results and allow Excel download.
-    - NEW: View results in 12-month windows and download per window.
+    - Select account + SC
+    - Click Run Audit once
+    - Results persist in session_state so window dropdown does not reset the page
+    - Audit text report section removed entirely per request
     """
 
-    st.title("🧾 Audit Report Viewer")
+    st.title("Audit Report Viewer")
 
-    # 1️⃣ Account selection
+    # -----------------------------
+    # Session-state initialization
+    # -----------------------------
+    if "audit_results_df" not in st.session_state:
+        st.session_state.audit_results_df = None
+    if "audit_key" not in st.session_state:
+        st.session_state.audit_key = None
+
+    # 1️ Account selection
     accounts = _get_available_accounts()
     if not accounts:
         st.warning("No account numbers found in user_bills.")
@@ -318,9 +313,10 @@ def render_report_viewer():
         options=accounts,
         index=0,
         help="Choose an account to generate and view its audit report.",
+        key="rv_selected_account",
     )
 
-    # 2️⃣ SC selection from DB
+    # 2️ SC selection
     sc_codes = get_distinct_sc_codes()
     if not sc_codes:
         st.error("No Service Classification (SC) codes available in the database.")
@@ -330,63 +326,68 @@ def render_report_viewer():
         "Service Classification (SC):",
         options=sc_codes,
         help="SC codes are loaded from tariff_logic_versions in the DB.",
+        key="rv_selected_sc",
     )
 
-    run_audit = st.button("Run Audit for Selected Account")
+    # Invalidate cached results when account/SC changes
+    current_key = (selected_account, selected_sc)
+    if st.session_state.audit_key is not None and st.session_state.audit_key != current_key:
+        st.session_state.audit_results_df = None
+        st.session_state.audit_key = None
 
-    if not run_audit:
+    run_audit = st.button("Run Audit for Selected Account", key="rv_run_audit")
+
+    # Run audit only on click; store results for stable reruns
+    if run_audit:
+        try:
+            tariff_json_path = _build_tariff_json_from_db_for_account(selected_account, selected_sc)
+        except Exception as e:
+            st.error(f"Failed to build tariff definitions from DB: {e}")
+            logger.exception("Error building tariff JSON from DB")
+            return
+
+        st.caption(
+            f"Using tariff logic from database for SC **{selected_sc}**, "
+            f"filtered by this account's bill read dates."
+        )
+
+        reporter = BillAuditReporter(tariff_json_path, default_sc=selected_sc)
+
+        with st.spinner(f"Running audit for account {selected_account} under {selected_sc}..."):
+            text_report = reporter.generate_audit(account_id=selected_account)
+
+        # Keep error checks; we just do not display the text report UI
+        if isinstance(text_report, str) and text_report.startswith("Error"):
+            st.error(text_report)
+            return
+        if isinstance(text_report, str) and "No bill data found" in text_report:
+            st.warning(text_report)
+            return
+
+        results = reporter.last_results or []
+        if not results:
+            st.info("Audit completed, but no results were produced.")
+            return
+
+        results_df = pd.DataFrame(results)
+
+        st.session_state.audit_results_df = results_df
+        st.session_state.audit_key = current_key
+
+    # If we do not have stored results yet, show instruction and stop
+    if st.session_state.audit_results_df is None or st.session_state.audit_results_df.empty:
         st.info("Select an account and SC, then click **Run Audit for Selected Account**.")
         return
 
-    # 3️⃣ Build tariff JSON from DB (sc_code + effective_date range)
-    try:
-        tariff_json_path = _build_tariff_json_from_db_for_account(selected_account, selected_sc)
-    except Exception as e:
-        st.error(f"Failed to build tariff definitions from DB: {e}")
-        logger.exception("Error building tariff JSON from DB")
-        return
+    results_df = st.session_state.audit_results_df
 
-    st.caption(
-        f"Using tariff logic from database for SC **{selected_sc}**, "
-        f"filtered by this account's bill read dates."
-    )
-
-    # 4️⃣ Run audit via BillAuditReporter
-    reporter = BillAuditReporter(tariff_json_path, default_sc=selected_sc)
-
-    with st.spinner(f"Running audit for account {selected_account} under {selected_sc}..."):
-        text_report = reporter.generate_audit(account_id=selected_account)
-
-    if text_report.startswith("Error"):
-        st.error(text_report)
-        return
-    if "No bill data found" in text_report:
-        st.warning(text_report)
-        return
-
-    results = reporter.last_results or []
-    if not results:
-        st.info("Audit completed, but no results were produced.")
-        return
-
-    results_df = pd.DataFrame(results)
-
-    # 5️⃣ Overall report
-    st.subheader("📄 Audit Text Report (Overall)")
-    st.text_area(
-        "Report",
-        value=text_report,
-        height=300,
-        label_visibility="collapsed",
-    )
-
-    # --- Clean base table (drop trace) ---
+    # Clean base table (drop trace if present)
     base_df = results_df.copy()
     if "trace" in base_df.columns:
         base_df = base_df.drop(columns=["trace"])
 
-    # 6️⃣ NEW: 12-month viewing
-    st.subheader("🗓️ Calculation Report by 12-Month Windows")
+    # 12-month viewing
+    st.subheader("Calculation Report by 12-Month Windows")
 
     date_col = _detect_date_column(base_df)
     if not date_col:
@@ -398,14 +399,17 @@ def render_report_viewer():
         windowed_df, windows = _add_12_month_windows(base_df, date_col=date_col)
 
         if windowed_df.empty or not windows:
-            st.warning(
-                f"Detected `{date_col}`, but could not form 12-month windows (no valid dates after parsing)."
-            )
+            st.warning(f"Detected `{date_col}`, but could not form 12-month windows (no valid dates after parsing).")
         else:
             st.caption(f"Windows derived from `{date_col}` (grouped by month into consecutive 12-month blocks).")
 
             options = ["All results (no window filter)"] + [w["label"] for w in windows]
-            selected_window = st.selectbox("Select a 12-month window:", options=options, index=0)
+            selected_window = st.selectbox(
+                "Select a 12-month window:",
+                options=options,
+                index=0,
+                key="rv_selected_window",
+            )
 
             if selected_window == "All results (no window filter)":
                 view_df = windowed_df.copy()
@@ -416,8 +420,9 @@ def render_report_viewer():
                 file_suffix = selected_window.split(":")[0].replace(" ", "_").upper()
                 sheet_name = selected_window
 
-            # Summary metrics
+            # Summary metrics (fixed for actual/expected/variance)
             summary = _compute_window_summary(view_df)
+
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Rows", f"{summary.get('rows', 0):,}")
             c2.metric("Sum Actual", f"${summary['sum_actual']:,.2f}" if summary.get("sum_actual") is not None else "—")
@@ -425,7 +430,7 @@ def render_report_viewer():
             c4.metric("Sum Difference", f"${summary['sum_difference']:,.2f}" if summary.get("sum_difference") is not None else "—")
 
             # Display table (remove internal window columns)
-            st.subheader("🔍 Window Results Table")
+            st.subheader("Window Results Table")
             display_df = view_df.drop(
                 columns=[c for c in ["__bill_dt", "__bill_month", "__window_id", "__window_label"] if c in view_df.columns],
                 errors="ignore",
@@ -434,22 +439,24 @@ def render_report_viewer():
 
             # Download this window
             st.download_button(
-                label="⬇️ Download Selected Window (Excel)",
+                label="Download Selected Window (Excel)",
                 data=_df_to_excel_bytes(display_df, sheet_name=sheet_name),
                 file_name=f"final_audit_report_{selected_account}_{file_suffix}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="rv_download_window",
             )
 
-    # 7️⃣ Keep overall table + overall download (existing behavior)
-    st.subheader("🔍 Audit Results Table (Overall)")
+    # Overall results table + overall download
+    st.subheader("Audit Results Table (Overall)")
     st.dataframe(base_df, width="stretch")
 
-    st.subheader("⬇️ Download Overall Audit (Excel)")
+    st.subheader("Download Overall Audit (Excel)")
     st.download_button(
-        label="⬇️ Download Audit Report (Excel)",
+        label="Download Audit Report (Excel)",
         data=_df_to_excel_bytes(base_df, sheet_name="Overall Audit"),
         file_name=f"final_audit_report_{selected_account}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        key="rv_download_overall",
     )
 
 
