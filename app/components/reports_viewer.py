@@ -1,6 +1,7 @@
 # reports_viewer.py
 
 import os
+import re
 import json
 import tempfile
 from io import BytesIO
@@ -22,14 +23,56 @@ logger = get_logger("AuditReportViewer")
 
 
 # ---------------------------------------------------------
-# Excel helper
+# Excel helper (FIXED: sanitize sheet names)
 # ---------------------------------------------------------
+def _safe_excel_sheet_name(name: str, fallback: str = "Audit Results") -> str:
+    """
+    Excel worksheet name constraints:
+      - max 31 characters
+      - cannot contain: : \\ / ? * [ ]
+      - cannot be empty
+    """
+    if not name:
+        return fallback
+
+    name = str(name)
+
+    # Replace invalid characters
+    name = re.sub(r"[:\\/?*\[\]]", " ", name)
+
+    # Optional normalization for UI arrows/dashes
+    name = name.replace("→", "-").replace("–", "-").replace("—", "-")
+
+    # Collapse whitespace and trim
+    name = re.sub(r"\s+", " ", name).strip()
+
+    # Truncate to 31 chars
+    name = name[:31].strip()
+
+    return name if name else fallback
+
+
 def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str = "Audit Results") -> BytesIO:
     output = BytesIO()
+    safe_name = _safe_excel_sheet_name(sheet_name)
     with pd.ExcelWriter(output, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name=sheet_name[:31])  # Excel sheet name limit
+        df.to_excel(writer, index=False, sheet_name=safe_name)
     output.seek(0)
     return output
+
+
+def _safe_filename_token(token: str, fallback: str = "WINDOW") -> str:
+    """
+    Keep filenames safe across OS:
+      - replace spaces with _
+      - drop characters that can be problematic
+    """
+    if not token:
+        return fallback
+    token = str(token)
+    token = token.replace(" ", "_").replace("→", "-")
+    token = re.sub(r"[^A-Za-z0-9_.-]+", "", token)
+    return token if token else fallback
 
 
 # ---------------------------------------------------------
@@ -257,7 +300,6 @@ def _compute_window_summary(df: pd.DataFrame) -> dict:
         s = pd.to_numeric(df[col], errors="coerce").fillna(0).sum()
         return float(s)
 
-    # Your current output uses: actual, expected, variance
     summary["sum_actual"] = _sum("actual") if "actual" in df.columns else None
 
     if "expected" in df.columns:
@@ -291,18 +333,13 @@ def render_report_viewer():
     - Results persist in session_state so window dropdown does not reset the page
     - Audit text report section removed entirely per request
     """
-
     st.title("Audit Report Viewer")
 
-    # -----------------------------
-    # Session-state initialization
-    # -----------------------------
     if "audit_results_df" not in st.session_state:
         st.session_state.audit_results_df = None
     if "audit_key" not in st.session_state:
         st.session_state.audit_key = None
 
-    # 1️ Account selection
     accounts = _get_available_accounts()
     if not accounts:
         st.warning("No account numbers found in user_bills.")
@@ -316,7 +353,6 @@ def render_report_viewer():
         key="rv_selected_account",
     )
 
-    # 2️ SC selection
     sc_codes = get_distinct_sc_codes()
     if not sc_codes:
         st.error("No Service Classification (SC) codes available in the database.")
@@ -329,7 +365,6 @@ def render_report_viewer():
         key="rv_selected_sc",
     )
 
-    # Invalidate cached results when account/SC changes
     current_key = (selected_account, selected_sc)
     if st.session_state.audit_key is not None and st.session_state.audit_key != current_key:
         st.session_state.audit_results_df = None
@@ -337,7 +372,6 @@ def render_report_viewer():
 
     run_audit = st.button("Run Audit for Selected Account", key="rv_run_audit")
 
-    # Run audit only on click; store results for stable reruns
     if run_audit:
         try:
             tariff_json_path = _build_tariff_json_from_db_for_account(selected_account, selected_sc)
@@ -356,7 +390,6 @@ def render_report_viewer():
         with st.spinner(f"Running audit for account {selected_account} under {selected_sc}..."):
             text_report = reporter.generate_audit(account_id=selected_account)
 
-        # Keep error checks; we just do not display the text report UI
         if isinstance(text_report, str) and text_report.startswith("Error"):
             st.error(text_report)
             return
@@ -369,24 +402,19 @@ def render_report_viewer():
             st.info("Audit completed, but no results were produced.")
             return
 
-        results_df = pd.DataFrame(results)
-
-        st.session_state.audit_results_df = results_df
+        st.session_state.audit_results_df = pd.DataFrame(results)
         st.session_state.audit_key = current_key
 
-    # If we do not have stored results yet, show instruction and stop
     if st.session_state.audit_results_df is None or st.session_state.audit_results_df.empty:
         st.info("Select an account and SC, then click **Run Audit for Selected Account**.")
         return
 
     results_df = st.session_state.audit_results_df
 
-    # Clean base table (drop trace if present)
     base_df = results_df.copy()
     if "trace" in base_df.columns:
         base_df = base_df.drop(columns=["trace"])
 
-    # 12-month viewing
     st.subheader("Calculation Report by 12-Month Windows")
 
     date_col = _detect_date_column(base_df)
@@ -417,10 +445,9 @@ def render_report_viewer():
                 sheet_name = "All Results"
             else:
                 view_df = windowed_df[windowed_df["__window_label"] == selected_window].copy()
-                file_suffix = selected_window.split(":")[0].replace(" ", "_").upper()
-                sheet_name = selected_window
+                file_suffix = _safe_filename_token(selected_window.split(":")[0].replace(" ", "_").upper(), "WINDOW")
+                sheet_name = selected_window  # will be sanitized inside _df_to_excel_bytes
 
-            # Summary metrics (fixed for actual/expected/variance)
             summary = _compute_window_summary(view_df)
 
             c1, c2, c3, c4 = st.columns(4)
@@ -429,7 +456,6 @@ def render_report_viewer():
             c3.metric("Sum Calculated", f"${summary['sum_calculated']:,.2f}" if summary.get("sum_calculated") is not None else "—")
             c4.metric("Sum Difference", f"${summary['sum_difference']:,.2f}" if summary.get("sum_difference") is not None else "—")
 
-            # Display table (remove internal window columns)
             st.subheader("Window Results Table")
             display_df = view_df.drop(
                 columns=[c for c in ["__bill_dt", "__bill_month", "__window_id", "__window_label"] if c in view_df.columns],
@@ -437,7 +463,6 @@ def render_report_viewer():
             )
             st.dataframe(display_df, width="stretch")
 
-            # Download this window
             st.download_button(
                 label="Download Selected Window (Excel)",
                 data=_df_to_excel_bytes(display_df, sheet_name=sheet_name),
@@ -446,7 +471,6 @@ def render_report_viewer():
                 key="rv_download_window",
             )
 
-    # Overall results table + overall download
     st.subheader("Audit Results Table (Overall)")
     st.dataframe(base_df, width="stretch")
 
