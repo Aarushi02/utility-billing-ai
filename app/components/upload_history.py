@@ -39,7 +39,7 @@ def render_upload_history():
 
             st.markdown("### 📄 Database Records")
             df = pd.DataFrame(rows)
-            st.dataframe(df, width='stretch', hide_index=True)
+            st.dataframe(df, use_container_width=True, hide_index=True)
         else:
             st.info("📭 No database records found")
 
@@ -64,7 +64,7 @@ def render_upload_history():
                         "S3 Exists": "✅",
                     })
                 df_orphan = pd.DataFrame(orphan_rows)
-                st.dataframe(df_orphan, width='stretch', hide_index=True)
+                st.dataframe(df_orphan, use_container_width=True, hide_index=True)
         
         if (not raw_docs) and (not s3_items):
             st.info("📭 No documents uploaded yet")

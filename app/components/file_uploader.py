@@ -169,7 +169,7 @@ def render_file_uploader():
                 # Data table with index starting from 1
                 df_display = df.copy()
                 df_display.index = df_display.index + 1
-                st.dataframe(df_display, width='stretch')
+                st.dataframe(df_display, use_container_width=True)
 
                 # Persist results and hide uploader on rerun
                 st.session_state["bill_processed"] = True
@@ -195,7 +195,7 @@ def render_file_uploader():
                 st.metric(label="Anomalies detected", value=res["total_anomalies"])
             with col2:
                 st.info("💡 Tip: check Audit Bills section to get better insights.")
-            st.dataframe(res["dataframe"], width='stretch')
+            st.dataframe(res["dataframe"], use_container_width=True)
             
             # Highlight the "Upload another bill" button with a more prominent color
             st.markdown(

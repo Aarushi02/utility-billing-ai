@@ -43,6 +43,16 @@ except:
     logger = logging.getLogger(__name__)
 
 import streamlit as st
+
+# -----------------------------------------------------
+# PAGE SETTINGS (MUST BE FIRST STREAMLIT COMMAND)
+# -----------------------------------------------------
+st.set_page_config(
+    page_title="Utility Billing AI",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
 from app.components.home import check_authentication, logout
 from app.components.login import render_login_page
 from app.components.dashboard import render_dashboard
@@ -61,15 +71,6 @@ def initialize_database():
 
 # Call initialization once per session
 initialize_database()
-
-# -----------------------------------------------------
-# PAGE SETTINGS
-# -----------------------------------------------------
-st.set_page_config(
-    page_title="Utility Billing AI",
-    layout="wide",
-    initial_sidebar_state="collapsed",
-)
 
 # -----------------------------------------------------
 # AUTHENTICATION CHECK
@@ -204,7 +205,7 @@ if not show_home:
     st.sidebar.markdown("---")
     
     # Back to Home button
-    if st.sidebar.button("🏠 Back to Home", width='stretch'):
+    if st.sidebar.button("🏠 Back to Home", use_container_width=True):
         st.session_state.nav_state = "home"
         st.rerun()
     

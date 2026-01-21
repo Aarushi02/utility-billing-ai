@@ -461,7 +461,7 @@ def render_report_viewer():
                 columns=[c for c in ["__bill_dt", "__bill_month", "__window_id", "__window_label"] if c in view_df.columns],
                 errors="ignore",
             )
-            st.dataframe(display_df, width="stretch")
+            st.dataframe(display_df, use_container_width=True)
 
             st.download_button(
                 label="Download Selected Window (Excel)",
@@ -472,7 +472,7 @@ def render_report_viewer():
             )
 
     st.subheader("Audit Results Table (Overall)")
-    st.dataframe(base_df, width="stretch")
+    st.dataframe(base_df, use_container_width=True)
 
     st.subheader("Download Overall Audit (Excel)")
     st.download_button(

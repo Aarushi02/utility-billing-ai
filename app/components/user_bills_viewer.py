@@ -1,6 +1,6 @@
 import streamlit as st
 import pandas as pd
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
+from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
 # Import your DB utils
 # (Ensure these paths match your project structure)
@@ -237,6 +237,16 @@ def render_user_bills_viewer():
     st.info("👆 Click on any red highlighted row to see anomaly details.")
 
     gb = GridOptionsBuilder.from_dataframe(display_df)
+
+    # Make headers auto-size and wrap so full column names are visible.
+    gb.configure_default_column(
+        resizable=True,
+        filter=True,
+        sortable=True,
+        wrapHeaderText=True,
+        autoHeaderHeight=True,
+        min_column_width=140,
+    )
     
     # 1. Configure Row Styling (Red Highlights)
     gb.configure_grid_options(
@@ -263,8 +273,32 @@ def render_user_bills_viewer():
             "border-right": "6px solid #ff1a1a !important;",
             "box-shadow": "inset 0 0 12px rgba(255, 0, 0, 0.45) !important;",
             "border-radius": "4px !important;",
-        }
+        },
+        # Let header text wrap to multiple lines instead of truncating.
+        ".ag-header-cell-label": {
+            "white-space": "normal !important;",
+            "height": "auto !important;",
+            "line-height": "1.2 !important;",
+            "padding-top": "6px !important;",
+            "padding-bottom": "6px !important;",
+        },
+        # Give headers more vertical space so wrapped text stays readable.
+        ".ag-header": {
+            "min-height": "64px !important;",
+        },
+        ".ag-header-row": {
+            "min-height": "64px !important;",
+        },
     }
+
+    # Auto-size columns when data first renders so headers and cells match.
+    grid_options["onFirstDataRendered"] = JsCode(
+        """
+        function(params) {
+            params.api.autoSizeAllColumns();
+        }
+        """
+    )
 
     grid_response = AgGrid(
         display_df,
@@ -277,6 +311,11 @@ def render_user_bills_viewer():
         update_mode=GridUpdateMode.SELECTION_CHANGED, 
         data_return_mode=DataReturnMode.FILTERED_AND_SORTED
     )
+
+    # Optional fullscreen, read-only view using Streamlit's dataframe (has fullscreen icon)
+    with st.expander("Fullscreen view (read-only)", expanded=False):
+        fullscreen_df = display_df.drop(columns=["_has_issue"], errors="ignore")
+        st.dataframe(fullscreen_df, use_container_width=True, height=720)
 
     # ===========================
     # POPUP LOGIC
@@ -327,5 +366,4 @@ def render_user_bills_viewer():
     st.subheader("All Anomalies (Overview)")
     if not issues_df.empty:
         issues_display = issues_df.copy()
-        # UPDATED: Replaced use_container_width=True with width="stretch" per warning
-        st.dataframe(issues_display, width="stretch")
+        st.dataframe(issues_display, use_container_width=True)
