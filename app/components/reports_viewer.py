@@ -19,6 +19,12 @@ from src.database.db_utils import (
 )
 from src.agents.reporting_generating_agent.report_generator import BillAuditReporter
 
+# Domain logic: AuditEngine (used for per-row TRA/RDM override calculations)
+try:
+    from src.agents.audit_calculation_agent.calc_engine_updated import AuditEngine
+except Exception:
+    AuditEngine = None  # Streamlit UI will show an error if calculator is used
+
 logger = get_logger("AuditReportViewer")
 
 
@@ -73,6 +79,147 @@ def _safe_filename_token(token: str, fallback: str = "WINDOW") -> str:
     token = token.replace(" ", "_").replace("→", "-")
     token = re.sub(r"[^A-Za-z0-9_.-]+", "", token)
     return token if token else fallback
+
+
+# ---------------------------------------------------------
+# Dynamic bill spreadsheet helpers (TRA/RDM overrides)
+# ---------------------------------------------------------
+def _pick_first_existing(df: pd.DataFrame, candidates: list[str]) -> str | None:
+    for c in candidates:
+        if c in df.columns:
+            return c
+    return None
+
+
+def _coerce_numeric(series: pd.Series) -> pd.Series:
+    return pd.to_numeric(series, errors="coerce").fillna(0.0)
+
+
+def _clean_column_names_local(df: pd.DataFrame) -> pd.DataFrame:
+    """Lightweight column normalizer to align DB extracts with engine keys."""
+    if df is None or df.empty:
+        return df
+    out = df.copy()
+    out.columns = [
+        re.sub(r"[^a-z0-9_]+", "_", str(c).strip().lower()).strip("_") for c in out.columns
+    ]
+    return out
+
+
+def _resolve_bill_grid_columns(df: pd.DataFrame) -> dict | None:
+    """
+    Resolve columns for the dynamic monthly bill spreadsheet.
+
+    Required:
+      - bill date (read_date or bill_date)
+      - billed kWh
+      - billed demand (kW)
+      - actual bill amount
+      - service class (optional; if missing we inject selected SC)
+    """
+    if df is None or df.empty:
+        return None
+
+    bill_date_col = _pick_first_existing(df, ["read_date", "bill_date", "date", "billing_date"])
+    kwh_col = _pick_first_existing(df, ["billed_kwh", "kwh", "usage_kwh", "total_kwh", "energy_kwh"])
+    demand_col = _pick_first_existing(df, ["billed_demand", "demand_kw", "demand", "kw_demand"])
+    amount_col = _pick_first_existing(
+        df, ["bill_amount", "total_bill", "billed_amount", "amount_due", "current_charges"]
+    )
+    sc_col = _pick_first_existing(df, ["service_class", "sc_code", "rate_class", "service_classification"])
+
+    if not (bill_date_col and kwh_col and demand_col and amount_col):
+        return None
+
+    return {
+        "bill_date": bill_date_col,
+        "billed_kwh": kwh_col,
+        "billed_demand": demand_col,
+        "bill_amount": amount_col,
+        "service_class": sc_col,  # may be None
+    }
+
+
+def _build_bill_override_grid(df: pd.DataFrame, cols: dict, selected_sc: str) -> pd.DataFrame:
+    base_cols = [cols["bill_date"], cols["billed_kwh"], cols["billed_demand"], cols["bill_amount"]]
+    if cols.get("service_class"):
+        base_cols.append(cols["service_class"])
+
+    out = df[base_cols].copy()
+
+    # Normalize/ensure service class
+    if not cols.get("service_class"):
+        out["service_class"] = selected_sc
+    else:
+        # Fill missing with selected_sc to avoid engine ambiguity
+        out[cols["service_class"]] = out[cols["service_class"]].fillna(selected_sc)
+
+    # Editable override columns (user enters)
+    if "override_tra" not in out.columns:
+        out["override_tra"] = 0.0
+    if "override_rdm" not in out.columns:
+        out["override_rdm"] = 0.0
+
+    return out
+
+
+def _compute_expected_from_overrides(
+    engine: "AuditEngine",
+    grid_df: pd.DataFrame,
+    cols: dict,
+) -> pd.DataFrame:
+    """
+    Run AuditEngine per row using override_tra/override_rdm to compute expected bill.
+
+    Requires AuditEngine.calculate_expected_bill() to support override_tra + override_rdm
+    (override mode).
+    """
+    rows: list[dict] = []
+
+    for _, r in grid_df.iterrows():
+        sc_val = (
+            r.get(cols.get("service_class"))
+            if cols.get("service_class")
+            else r.get("service_class")
+        )
+
+        ctx = {
+            "read_date": r.get(cols["bill_date"]),
+            "bill_date": r.get(cols["bill_date"]),
+            "billed_kwh": r.get(cols["billed_kwh"]),
+            "billed_demand": r.get(cols["billed_demand"]),
+            "bill_amount": r.get(cols["bill_amount"]),
+            "service_class": sc_val,
+            "override_tra": r.get("override_tra"),
+            "override_rdm": r.get("override_rdm"),
+        }
+
+        out = engine.calculate_expected_bill(pd.Series(ctx))
+
+        expected_val = out.get("expected_bill", out.get("expected_amount", 0.0))
+        variance_val = out.get("variance", 0.0)
+
+        rows.append(
+            {
+                "Bill Date": ctx["bill_date"],
+                "Service Class": out.get("sc_code", sc_val),
+                "kWh": float(ctx.get("billed_kwh") or 0.0),
+                "Demand (kW)": float(ctx.get("billed_demand") or 0.0),
+                "Actual Bill": float(ctx.get("bill_amount") or 0.0),
+                "TRA": float(ctx.get("override_tra") or 0.0),
+                "RDM": float(ctx.get("override_rdm") or 0.0),
+                "Expected Bill": float(expected_val or 0.0),
+                "Variance": float(variance_val or 0.0),
+                "Status": out.get("status", ""),
+            }
+        )
+
+    calc_df = pd.DataFrame(rows)
+    if not calc_df.empty:
+        calc_df["Expected Bill"] = _coerce_numeric(calc_df["Expected Bill"]).round(2)
+        calc_df["Actual Bill"] = _coerce_numeric(calc_df["Actual Bill"]).round(2)
+        calc_df["Variance"] = _coerce_numeric(calc_df["Variance"]).round(2)
+    return calc_df
 
 
 # ---------------------------------------------------------
@@ -331,7 +478,7 @@ def render_report_viewer():
     - Select account + SC
     - Click Run Audit once
     - Results persist in session_state so window dropdown does not reset the page
-    - Audit text report section removed entirely per request
+    - Dynamic Expected Bill Calculator supports per-row TRA/RDM overrides
     """
     st.title("Audit Report Viewer")
 
@@ -339,6 +486,10 @@ def render_report_viewer():
         st.session_state.audit_results_df = None
     if "audit_key" not in st.session_state:
         st.session_state.audit_key = None
+    if "tariff_json_path" not in st.session_state:
+        st.session_state.tariff_json_path = None
+    if "tariff_key" not in st.session_state:
+        st.session_state.tariff_key = None
 
     accounts = _get_available_accounts()
     if not accounts:
@@ -369,6 +520,9 @@ def render_report_viewer():
     if st.session_state.audit_key is not None and st.session_state.audit_key != current_key:
         st.session_state.audit_results_df = None
         st.session_state.audit_key = None
+    if st.session_state.tariff_key is not None and st.session_state.tariff_key != current_key:
+        st.session_state.tariff_json_path = None
+        st.session_state.tariff_key = None
 
     run_audit = st.button("Run Audit for Selected Account", key="rv_run_audit")
 
@@ -404,9 +558,105 @@ def render_report_viewer():
 
         st.session_state.audit_results_df = pd.DataFrame(results)
         st.session_state.audit_key = current_key
+        st.session_state.tariff_json_path = tariff_json_path
+        st.session_state.tariff_key = current_key
 
+    # ---------------------------------------------------------
+    # Dynamic Expected Bill Calculator (TRA/RDM overrides)
+    # ---------------------------------------------------------
+    st.subheader("Expected Bill Calculator (TRA/RDM Overrides)")
+
+    if AuditEngine is None:
+        st.error(
+            "AuditEngine import failed. Ensure src.agents.audit_calculation_agent.calc_engine_updated is available."
+        )
+    else:
+        # Build or reuse tariff JSON path for the current account+SC
+        if st.session_state.tariff_json_path is None or st.session_state.tariff_key != current_key:
+            try:
+                st.session_state.tariff_json_path = _build_tariff_json_from_db_for_account(selected_account, selected_sc)
+                st.session_state.tariff_key = current_key
+            except Exception as e:
+                st.error(f"Failed to build tariff definitions from DB for calculator: {e}")
+                st.session_state.tariff_json_path = None
+
+        # Pull raw bills for this account (so we can show the existing bill)
+        try:
+            df_bills = fetch_user_bills(account_id=selected_account)
+            df_bills = _clean_column_names_local(df_bills)
+        except Exception as e:
+            st.error(f"Failed to fetch user bills for calculator: {e}")
+            df_bills = pd.DataFrame()
+
+        if df_bills is None or df_bills.empty:
+            st.info("No user bills available to build the calculator grid.")
+        else:
+            # Filter to selected SC when present
+            if "service_class" in df_bills.columns:
+                sc_norm = str(selected_sc).strip().upper().replace("-", "")
+                df_bills["service_class"] = df_bills["service_class"].astype(str)
+                df_bills = df_bills[
+                    df_bills["service_class"].str.upper().str.replace("-", "", regex=False) == sc_norm
+                ].copy()
+
+            resolved = _resolve_bill_grid_columns(df_bills)
+            if not resolved:
+                st.info(
+                    "Calculator grid could not be formed. Required columns not found.\n\n"
+                    "Needed: read_date/bill_date, billed_kwh, billed_demand, bill_amount.\n"
+                    "Optional: service_class."
+                )
+            elif st.session_state.tariff_json_path is None:
+                st.info("Tariff definitions are not available; calculator is disabled.")
+            else:
+                # Build per-account+sc editable grid in session state
+                grid_key = f"override_grid_{selected_account}_{selected_sc}"
+                if grid_key not in st.session_state:
+                    st.session_state[grid_key] = _build_bill_override_grid(df_bills, resolved, selected_sc)
+
+                st.caption(
+                    "Edit TRA and RDM per row (override_tra/override_rdm). Expected bill is computed via AuditEngine override mode."
+                )
+
+                edited = st.data_editor(
+                    st.session_state[grid_key],
+                    use_container_width=True,
+                    num_rows="fixed",
+                    key=f"rv_editor_{selected_account}_{selected_sc}",
+                    column_config={
+                        "override_tra": st.column_config.NumberColumn("TRA", format="%.5f", step=0.00001),
+                        "override_rdm": st.column_config.NumberColumn("RDM", format="%.2f", step=0.01),
+                    },
+                )
+                st.session_state[grid_key] = edited
+
+                # Compute via engine
+                try:
+                    engine = AuditEngine(st.session_state.tariff_json_path)
+                    calc_df = _compute_expected_from_overrides(engine, edited, resolved)
+                except Exception as e:
+                    st.error(f"Failed to compute expected bills: {e}")
+                    calc_df = pd.DataFrame()
+
+                if calc_df is not None and not calc_df.empty:
+                    st.dataframe(calc_df, use_container_width=True)
+
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Total Actual", f"${calc_df['Actual Bill'].sum():,.2f}")
+                    c2.metric("Total Expected", f"${calc_df['Expected Bill'].sum():,.2f}")
+                    c3.metric("Total Variance", f"${calc_df['Variance'].sum():,.2f}")
+
+                    st.download_button(
+                        "Download Expected Bill (Overrides) - Excel",
+                        data=_df_to_excel_bytes(calc_df, sheet_name=f"{selected_sc}_Overrides"),
+                        file_name=f"expected_bill_overrides_{selected_account}_{selected_sc}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key=f"rv_dl_overrides_{selected_account}_{selected_sc}",
+                    )
+
+    # If the user hasn't run the audit yet, we can still provide the calculator.
     if st.session_state.audit_results_df is None or st.session_state.audit_results_df.empty:
-        st.info("Select an account and SC, then click **Run Audit for Selected Account**.")
+        st.info("To view audit results and 12-month windows, click **Run Audit for Selected Account** above.")
         return
 
     results_df = st.session_state.audit_results_df
@@ -445,7 +695,9 @@ def render_report_viewer():
                 sheet_name = "All Results"
             else:
                 view_df = windowed_df[windowed_df["__window_label"] == selected_window].copy()
-                file_suffix = _safe_filename_token(selected_window.split(":")[0].replace(" ", "_").upper(), "WINDOW")
+                file_suffix = _safe_filename_token(
+                    selected_window.split(":")[0].replace(" ", "_").upper(), "WINDOW"
+                )
                 sheet_name = selected_window  # will be sanitized inside _df_to_excel_bytes
 
             summary = _compute_window_summary(view_df)
@@ -453,15 +705,21 @@ def render_report_viewer():
             c1, c2, c3, c4 = st.columns(4)
             c1.metric("Rows", f"{summary.get('rows', 0):,}")
             c2.metric("Sum Actual", f"${summary['sum_actual']:,.2f}" if summary.get("sum_actual") is not None else "—")
-            c3.metric("Sum Calculated", f"${summary['sum_calculated']:,.2f}" if summary.get("sum_calculated") is not None else "—")
-            c4.metric("Sum Difference", f"${summary['sum_difference']:,.2f}" if summary.get("sum_difference") is not None else "—")
+            c3.metric(
+                "Sum Calculated",
+                f"${summary['sum_calculated']:,.2f}" if summary.get("sum_calculated") is not None else "—",
+            )
+            c4.metric(
+                "Sum Difference",
+                f"${summary['sum_difference']:,.2f}" if summary.get("sum_difference") is not None else "—",
+            )
 
             st.subheader("Window Results Table")
             display_df = view_df.drop(
                 columns=[c for c in ["__bill_dt", "__bill_month", "__window_id", "__window_label"] if c in view_df.columns],
                 errors="ignore",
             )
-            st.dataframe(display_df, use_container_width=True)
+            st.dataframe(display_df, width="stretch")
 
             st.download_button(
                 label="Download Selected Window (Excel)",
@@ -472,7 +730,7 @@ def render_report_viewer():
             )
 
     st.subheader("Audit Results Table (Overall)")
-    st.dataframe(base_df, use_container_width=True)
+    st.dataframe(base_df, width="stretch")
 
     st.subheader("Download Overall Audit (Excel)")
     st.download_button(
