@@ -813,7 +813,12 @@ def get_distinct_sc_codes():
     logger.info("start of get_distinct_sc_codes")
     session = get_session()
     try:
-        rows = session.query(TariffLogicVersion.sc_code).distinct().all()
+        rows = (
+            session.query(TariffLogicVersion.sc_code)
+            .distinct()
+            .order_by(TariffLogicVersion.sc_code.asc())
+            .all()
+        )
         sc_codes = [r.sc_code for r in rows]
         logger.info(f"SC codes found: {sc_codes}")
         return sc_codes
@@ -823,6 +828,7 @@ def get_distinct_sc_codes():
     finally:
         logger.info("end of get_distinct_sc_codes")
         session.close()
+        
 def get_versions_for_sc(sc_code: str):
     """
     Returns all effective dates for a given SC, sorted descending.
