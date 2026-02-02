@@ -1,7 +1,7 @@
 # src/database/models.py
 
 
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Text
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Text, Numeric, CheckConstraint
 from sqlalchemy import ForeignKey, Index, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
@@ -139,6 +139,80 @@ class TariffLogicVersion(Base):
     __table_args__ = (
         UniqueConstraint("sc_code", "effective_date", name="uq_tariff_logic_versions_sc_code_eff_date"),
         Index("idx_tariff_logic_lookup", "sc_code", "effective_date")
+    )
+
+
+
+# --- New: Rate tables for adjustments and charges ---
+class SBCSystemBenefitsCharge(Base):
+    """
+    System Benefits Charge rates by service class and effective date.
+    """
+    __tablename__ = "sbc_system_benefits_charge"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    effective_date = Column(Date, nullable=False)
+    sc_code = Column(String(50), nullable=False)
+    rate = Column(Numeric(18, 6), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("rate > 0", name="ck_sbc_rate_positive"),
+        Index("idx_sbc_lookup", "sc_code", "effective_date"),
+    )
+
+
+class TRATransmissionRevenueAdjustment(Base):
+    """
+    Transmission Revenue Adjustment rates by service class and effective date.
+    """
+    __tablename__ = "tra_transmission_revenue_adjustment"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    effective_date = Column(Date, nullable=False)
+    sc_code = Column(String(50), nullable=False)
+    rate = Column(Numeric(18, 6), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("rate > 0", name="ck_tra_rate_positive"),
+        Index("idx_tra_lookup", "sc_code", "effective_date"),
+    )
+
+
+class RDMRevenueDecouplingMechanism(Base):
+    """
+    Revenue Decoupling Mechanism rates by service class and effective date.
+    """
+    __tablename__ = "rdm_revenue_decoupling_mechanism"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    effective_date = Column(Date, nullable=False)
+    sc_code = Column(String(50), nullable=False)
+    rate = Column(Numeric(18, 6), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("rate > 0", name="ck_rdm_rate_positive"),
+        Index("idx_rdm_lookup", "sc_code", "effective_date"),
+    )
+
+
+class RAMRateAdjustmentMechanism(Base):
+    """
+    Rate Adjustment Mechanism rates by service class and effective date.
+    """
+    __tablename__ = "ram_rate_adjustment_mechanism"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    effective_date = Column(Date, nullable=False)
+    sc_code = Column(String(50), nullable=False)
+    rate = Column(Numeric(18, 6), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("rate > 0", name="ck_ram_rate_positive"),
+        Index("idx_ram_lookup", "sc_code", "effective_date"),
     )
 
 
