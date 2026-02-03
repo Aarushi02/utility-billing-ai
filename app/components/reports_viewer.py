@@ -18,24 +18,35 @@ except Exception:
 
 logger = get_logger("AuditReportViewer")
 
-# ---------------------------------------------------------
-# Allowed Service Classifications (UI)
-# ---------------------------------------------------------
+# =========================================================
+# CONSTANTS
+# =========================================================
+
 ALLOWED_SC_MAP = {
     "SC-1": "SC1",
     "SC-1C": "SC1C",
-    "SC-2 ND": "SC2",     # non-demand
-    "SC-2": "SC2D",      # demand
+    "SC-2 ND": "SC2",
+    "SC-2": "SC2D",
     "SC-3": "SC3",
     "SC-3A": "SC3A",
 }
 
-# ---------------------------------------------------------
-# Utility helpers
-# ---------------------------------------------------------
+# =========================================================
+# GENERIC SAFE HELPERS
+# =========================================================
+
+def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    df.columns = [
+        re.sub(r"[^a-z0-9_]+", "_", str(c).lower()).strip("_")
+        for c in df.columns
+    ]
+    return df
+
+
 def _safe_excel_sheet_name(name: str) -> str:
     name = re.sub(r"[:\\/?*\[\]]", " ", str(name))
-    return re.sub(r"\s+", " ", name).strip()[:31] or "Audit Results"
+    return re.sub(r"\s+", " ", name).strip()[:31] or "Results"
 
 
 def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
@@ -46,14 +57,9 @@ def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
     return buf
 
 
-def _clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [
-        re.sub(r"[^a-z0-9_]+", "_", str(c).lower()).strip("_")
-        for c in df.columns
-    ]
-    return df
-
+# =========================================================
+# COLUMN RESOLUTION (NO ASSUMPTIONS)
+# =========================================================
 
 def _resolve_service_class_column(df: pd.DataFrame) -> str | None:
     for c in [
@@ -69,8 +75,8 @@ def _resolve_service_class_column(df: pd.DataFrame) -> str | None:
 
 
 def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
-    def pick(cols):
-        for c in cols:
+    def pick(candidates):
+        for c in candidates:
             if c in df.columns:
                 return c
         return None
@@ -91,6 +97,10 @@ def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
     }
 
 
+# =========================================================
+# GRID + TARIFF HELPERS
+# =========================================================
+
 def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataFrame:
     out = df[
         [
@@ -107,10 +117,7 @@ def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataF
     return out
 
 
-# ---------------------------------------------------------
-# Tariff JSON builder (JSON / JSONB SAFE)
-# ---------------------------------------------------------
-def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str:
+def _build_tariff_json_from_db(account_id: str, sc_code: str) -> str:
     engine = get_engine()
 
     with engine.begin() as conn:
@@ -130,20 +137,18 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     definitions = []
 
     for r in rows:
-        raw_logic = r["logic_json"]
+        raw = r["logic_json"]
 
-        if isinstance(raw_logic, str):
-            logic_obj = json.loads(raw_logic)
-        elif isinstance(raw_logic, dict):
-            logic_obj = raw_logic
+        if isinstance(raw, str):
+            obj = json.loads(raw)
+        elif isinstance(raw, dict):
+            obj = raw
         else:
-            raise TypeError(f"Unsupported logic_json type: {type(raw_logic)}")
+            continue  # skip invalid rows safely
 
-        metadata = logic_obj.get("metadata", {}) or {}
-        metadata.setdefault("sc_code", sc_code)
-        logic_obj["metadata"] = metadata
-
-        definitions.append(logic_obj)
+        obj.setdefault("metadata", {})
+        obj["metadata"].setdefault("sc_code", sc_code)
+        definitions.append(obj)
 
     fd, path = tempfile.mkstemp(
         prefix=f"tariff_{sc_code}_{account_id}_",
@@ -156,9 +161,6 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     return path
 
 
-# ---------------------------------------------------------
-# Calculation helper
-# ---------------------------------------------------------
 def _compute_expected(engine, grid_df, cols):
     rows = []
 
@@ -197,36 +199,42 @@ def _compute_expected(engine, grid_df, cols):
     return df
 
 
-# ---------------------------------------------------------
-# MAIN VIEW
-# ---------------------------------------------------------
+# =========================================================
+# MAIN STREAMLIT VIEW (ORDER-SAFE)
+# =========================================================
+
 def render_report_viewer():
+
+    # ---- SESSION STATE (MUST BE FIRST) ----
+    st.session_state.setdefault("run_override_calc", False)
+
     st.title("Audit Report Viewer")
 
-    if "run_override_calc" not in st.session_state:
-        st.session_state.run_override_calc = False
-
-    # ---------------- Accounts ----------------
-    bills_all = fetch_user_bills(account_id=None)
-    bills_all = _clean_column_names(bills_all)
-
-    if "bill_account" not in bills_all.columns:
-        st.error("No bill_account column found in user bills.")
+    # ---- LOAD ALL BILLS SAFELY ----
+    all_bills = fetch_user_bills(account_id=None)
+    if all_bills is None or all_bills.empty:
+        st.error("No billing data available.")
         return
 
-    accounts = sorted(bills_all["bill_account"].dropna().unique())
+    all_bills = _clean_columns(all_bills)
+
+    if "bill_account" not in all_bills.columns:
+        st.error("Missing bill_account column.")
+        return
+
+    accounts = sorted(all_bills["bill_account"].dropna().unique())
     account = st.selectbox("Account Number", accounts)
 
-    # ---------------- Service Classification ----------------
+    # ---- SERVICE CLASS UI ----
     sc_label = st.selectbox("Service Classification", list(ALLOWED_SC_MAP.keys()))
     sc_code = ALLOWED_SC_MAP[sc_label]
 
-    # ---------------- Tariff Logic ----------------
-    tariff_path = _build_tariff_json_from_db_for_account(account, sc_code)
+    # ---- BUILD TARIFF LOGIC ----
+    tariff_path = _build_tariff_json_from_db(account, sc_code)
 
-    # ---------------- Bills for account ----------------
+    # ---- LOAD ACCOUNT BILLS ----
     df = fetch_user_bills(account_id=account)
-    df = _clean_column_names(df)
+    df = _clean_columns(df)
 
     sc_col = _resolve_service_class_column(df)
     if sc_col:
@@ -240,14 +248,14 @@ def render_report_viewer():
 
     cols = _resolve_bill_columns(df)
     if not cols:
-        st.error("Required bill columns missing (date / kWh / demand / amount).")
+        st.error("Required billing columns not found.")
         return
 
     grid_key = f"override_grid_{account}_{sc_code}"
     if grid_key not in st.session_state:
         st.session_state[grid_key] = _build_override_grid(df, cols, sc_code)
 
-    # ---------------- Calculator UI ----------------
+    # ---- USER INPUT GRID ----
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
     edited = st.data_editor(
@@ -266,7 +274,7 @@ def render_report_viewer():
     if st.button("Calculate Expected Bill", type="primary"):
         st.session_state.run_override_calc = True
 
-    # ---------------- Run Calculation ----------------
+    # ---- RUN CALCULATION ----
     if st.session_state.run_override_calc:
         engine = AuditEngine(tariff_path)
         result_df = _compute_expected(engine, edited, cols)
