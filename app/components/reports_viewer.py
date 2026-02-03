@@ -32,7 +32,7 @@ ALLOWED_SC_MAP = {
 }
 
 # =========================================================
-# GENERIC SAFE HELPERS
+# SAFE HELPERS
 # =========================================================
 
 def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
@@ -144,7 +144,7 @@ def _build_tariff_json_from_db(account_id: str, sc_code: str) -> str:
         elif isinstance(raw, dict):
             obj = raw
         else:
-            continue  # skip invalid rows safely
+            continue
 
         obj.setdefault("metadata", {})
         obj["metadata"].setdefault("sc_code", sc_code)
@@ -200,7 +200,27 @@ def _compute_expected(engine, grid_df, cols):
 
 
 # =========================================================
-# MAIN STREAMLIT VIEW (ORDER-SAFE)
+# SAFE SESSION STATE UPDATE (CRITICAL FIX)
+# =========================================================
+
+def _safe_update_grid_state(grid_key: str, edited_df: pd.DataFrame):
+    prev_df = st.session_state.get(grid_key)
+
+    if prev_df is None:
+        st.session_state[grid_key] = edited_df
+        return
+
+    try:
+        if not edited_df.equals(prev_df):
+            st.session_state[grid_key] = edited_df
+            st.session_state.run_override_calc = False
+    except Exception:
+        st.session_state[grid_key] = edited_df
+        st.session_state.run_override_calc = False
+
+
+# =========================================================
+# MAIN VIEW
 # =========================================================
 
 def render_report_viewer():
@@ -210,7 +230,7 @@ def render_report_viewer():
 
     st.title("Audit Report Viewer")
 
-    # ---- LOAD ALL BILLS SAFELY ----
+    # ---- LOAD ALL BILLS ----
     all_bills = fetch_user_bills(account_id=None)
     if all_bills is None or all_bills.empty:
         st.error("No billing data available.")
@@ -225,11 +245,11 @@ def render_report_viewer():
     accounts = sorted(all_bills["bill_account"].dropna().unique())
     account = st.selectbox("Account Number", accounts)
 
-    # ---- SERVICE CLASS UI ----
+    # ---- SERVICE CLASS ----
     sc_label = st.selectbox("Service Classification", list(ALLOWED_SC_MAP.keys()))
     sc_code = ALLOWED_SC_MAP[sc_label]
 
-    # ---- BUILD TARIFF LOGIC ----
+    # ---- BUILD TARIFF ----
     tariff_path = _build_tariff_json_from_db(account, sc_code)
 
     # ---- LOAD ACCOUNT BILLS ----
@@ -255,7 +275,7 @@ def render_report_viewer():
     if grid_key not in st.session_state:
         st.session_state[grid_key] = _build_override_grid(df, cols, sc_code)
 
-    # ---- USER INPUT GRID ----
+    # ---- DATA EDITOR ----
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
     edited = st.data_editor(
@@ -263,21 +283,26 @@ def render_report_viewer():
         num_rows="fixed",
         use_container_width=True,
         column_config={
-            "override_tra": st.column_config.NumberColumn("TRA ($/kWh)", format="%.5f"),
-            "override_rdm": st.column_config.NumberColumn("RDM ($/unit)", format="%.2f"),
+            "override_tra": st.column_config.NumberColumn(
+                "TRA ($/kWh)", format="%.5f", step=0.00001
+            ),
+            "override_rdm": st.column_config.NumberColumn(
+                "RDM ($/unit)", format="%.2f", step=0.01
+            ),
         },
     )
 
-    st.session_state[grid_key] = edited
-    st.session_state.run_override_calc = False
+    _safe_update_grid_state(grid_key, edited)
+
+    st.caption("Tip: Press Enter or click outside the cell to commit a value.")
 
     if st.button("Calculate Expected Bill", type="primary"):
         st.session_state.run_override_calc = True
 
-    # ---- RUN CALCULATION ----
+    # ---- CALCULATION ----
     if st.session_state.run_override_calc:
         engine = AuditEngine(tariff_path)
-        result_df = _compute_expected(engine, edited, cols)
+        result_df = _compute_expected(engine, st.session_state[grid_key], cols)
 
         st.dataframe(result_df, use_container_width=True)
 
