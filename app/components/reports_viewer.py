@@ -10,7 +10,6 @@ from sqlalchemy import text
 
 from src.utils.logger import get_logger
 from src.database.db_utils import fetch_user_bills, get_engine
-from src.agents.reporting_generating_agent.report_generator import BillAuditReporter
 
 try:
     from src.agents.audit_calculation_agent.calc_engine_updated import AuditEngine
@@ -25,14 +24,14 @@ logger = get_logger("AuditReportViewer")
 ALLOWED_SC_MAP = {
     "SC-1": "SC1",
     "SC-1C": "SC1C",
-    "SC-2 ND": "SC2",    # non-demand
-    "SC-2": "SC2D",     # demand
+    "SC-2 ND": "SC2",     # non-demand
+    "SC-2": "SC2D",      # demand
     "SC-3": "SC3",
     "SC-3A": "SC3A",
 }
 
 # ---------------------------------------------------------
-# Excel helpers
+# Utility helpers
 # ---------------------------------------------------------
 def _safe_excel_sheet_name(name: str) -> str:
     name = re.sub(r"[:\\/?*\[\]]", " ", str(name))
@@ -47,9 +46,6 @@ def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
     return buf
 
 
-# ---------------------------------------------------------
-# Data helpers
-# ---------------------------------------------------------
 def _clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [
@@ -57,6 +53,19 @@ def _clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
         for c in df.columns
     ]
     return df
+
+
+def _resolve_service_class_column(df: pd.DataFrame) -> str | None:
+    for c in [
+        "service_class",
+        "rate_class",
+        "sc_code",
+        "serviceclassification",
+        "service_classification",
+    ]:
+        if c in df.columns:
+            return c
+    return None
 
 
 def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
@@ -67,9 +76,9 @@ def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
         return None
 
     bill_date = pick(["read_date", "bill_date", "date"])
-    kwh = pick(["billed_kwh", "kwh", "usage_kwh"])
+    kwh = pick(["billed_kwh", "kwh", "usage_kwh", "energy_kwh"])
     demand = pick(["billed_demand", "demand_kw", "kw_demand"])
-    amount = pick(["bill_amount", "total_bill", "current_charges"])
+    amount = pick(["bill_amount", "total_bill", "current_charges", "amount_due"])
 
     if not all([bill_date, kwh, demand, amount]):
         return None
@@ -83,7 +92,15 @@ def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
 
 
 def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataFrame:
-    out = df[[cols["bill_date"], cols["billed_kwh"], cols["billed_demand"], cols["bill_amount"]]].copy()
+    out = df[
+        [
+            cols["bill_date"],
+            cols["billed_kwh"],
+            cols["billed_demand"],
+            cols["bill_amount"],
+        ]
+    ].copy()
+
     out["service_class"] = sc_code
     out["override_tra"] = 0.0
     out["override_rdm"] = 0.0
@@ -91,7 +108,7 @@ def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataF
 
 
 # ---------------------------------------------------------
-# Tariff JSON builder (FIXED)
+# Tariff JSON builder (JSON / JSONB SAFE)
 # ---------------------------------------------------------
 def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str:
     engine = get_engine()
@@ -99,7 +116,7 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     with engine.begin() as conn:
         rows = conn.execute(
             text("""
-                SELECT logic_json, effective_date, end_date
+                SELECT logic_json
                 FROM tariff_logic_versions
                 WHERE sc_code = :sc
                 ORDER BY effective_date
@@ -115,11 +132,12 @@ def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str
     for r in rows:
         raw_logic = r["logic_json"]
 
-        #  CRITICAL FIX: logic_json may already be a dict
         if isinstance(raw_logic, str):
             logic_obj = json.loads(raw_logic)
-        else:
+        elif isinstance(raw_logic, dict):
             logic_obj = raw_logic
+        else:
+            raise TypeError(f"Unsupported logic_json type: {type(raw_logic)}")
 
         metadata = logic_obj.get("metadata", {}) or {}
         metadata.setdefault("sc_code", sc_code)
@@ -188,32 +206,48 @@ def render_report_viewer():
     if "run_override_calc" not in st.session_state:
         st.session_state.run_override_calc = False
 
-    # ---------------- Account selection ----------------
-    accounts_df = fetch_user_bills(account_id=None)
-    accounts = sorted(accounts_df["bill_account"].dropna().unique())
+    # ---------------- Accounts ----------------
+    bills_all = fetch_user_bills(account_id=None)
+    bills_all = _clean_column_names(bills_all)
+
+    if "bill_account" not in bills_all.columns:
+        st.error("No bill_account column found in user bills.")
+        return
+
+    accounts = sorted(bills_all["bill_account"].dropna().unique())
     account = st.selectbox("Account Number", accounts)
 
-    # ---------------- SC selection ----------------
+    # ---------------- Service Classification ----------------
     sc_label = st.selectbox("Service Classification", list(ALLOWED_SC_MAP.keys()))
     sc_code = ALLOWED_SC_MAP[sc_label]
 
-    # ---------------- Load tariff logic ----------------
+    # ---------------- Tariff Logic ----------------
     tariff_path = _build_tariff_json_from_db_for_account(account, sc_code)
 
-    # ---------------- Load bills ----------------
+    # ---------------- Bills for account ----------------
     df = fetch_user_bills(account_id=account)
     df = _clean_column_names(df)
-    df = df[df["service_class"].str.upper().str.replace("-", "") == sc_code]
+
+    sc_col = _resolve_service_class_column(df)
+    if sc_col:
+        df = df[
+            df[sc_col]
+            .astype(str)
+            .str.upper()
+            .str.replace("-", "", regex=False)
+            == sc_code
+        ].copy()
 
     cols = _resolve_bill_columns(df)
     if not cols:
-        st.error("Required bill columns missing.")
+        st.error("Required bill columns missing (date / kWh / demand / amount).")
         return
 
     grid_key = f"override_grid_{account}_{sc_code}"
     if grid_key not in st.session_state:
         st.session_state[grid_key] = _build_override_grid(df, cols, sc_code)
 
+    # ---------------- Calculator UI ----------------
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
     edited = st.data_editor(
@@ -232,7 +266,7 @@ def render_report_viewer():
     if st.button("Calculate Expected Bill", type="primary"):
         st.session_state.run_override_calc = True
 
-    # ---------------- Run calculation ----------------
+    # ---------------- Run Calculation ----------------
     if st.session_state.run_override_calc:
         engine = AuditEngine(tariff_path)
         result_df = _compute_expected(engine, edited, cols)
