@@ -3,17 +3,13 @@ import re
 import json
 import tempfile
 from io import BytesIO
-from datetime import datetime
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import text
 
 from src.utils.logger import get_logger
-from src.database.db_utils import (
-    fetch_user_bills,
-    get_engine,
-)
+from src.database.db_utils import fetch_user_bills, get_engine
 from src.agents.reporting_generating_agent.report_generator import BillAuditReporter
 
 try:
@@ -24,7 +20,7 @@ except Exception:
 logger = get_logger("AuditReportViewer")
 
 # ---------------------------------------------------------
-# Allowed Service Classifications (UI only)
+# Allowed Service Classifications (UI)
 # ---------------------------------------------------------
 ALLOWED_SC_MAP = {
     "SC-1": "SC1",
@@ -38,12 +34,9 @@ ALLOWED_SC_MAP = {
 # ---------------------------------------------------------
 # Excel helpers
 # ---------------------------------------------------------
-def _safe_excel_sheet_name(name: str, fallback: str = "Audit Results") -> str:
-    if not name:
-        return fallback
+def _safe_excel_sheet_name(name: str) -> str:
     name = re.sub(r"[:\\/?*\[\]]", " ", str(name))
-    name = re.sub(r"\s+", " ", name).strip()[:31]
-    return name or fallback
+    return re.sub(r"\s+", " ", name).strip()[:31] or "Audit Results"
 
 
 def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
@@ -55,18 +48,18 @@ def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
 
 
 # ---------------------------------------------------------
-# Grid helpers
+# Data helpers
 # ---------------------------------------------------------
-def _clean_column_names_local(df: pd.DataFrame) -> pd.DataFrame:
+def _clean_column_names(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [
-        re.sub(r"[^a-z0-9_]+", "_", str(c).strip().lower()).strip("_")
+        re.sub(r"[^a-z0-9_]+", "_", str(c).lower()).strip("_")
         for c in df.columns
     ]
     return df
 
 
-def _resolve_bill_grid_columns(df: pd.DataFrame) -> dict | None:
+def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
     def pick(cols):
         for c in cols:
             if c in df.columns:
@@ -89,15 +82,66 @@ def _resolve_bill_grid_columns(df: pd.DataFrame) -> dict | None:
     }
 
 
-def _build_bill_override_grid(df: pd.DataFrame, cols: dict, sc: str) -> pd.DataFrame:
+def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataFrame:
     out = df[[cols["bill_date"], cols["billed_kwh"], cols["billed_demand"], cols["bill_amount"]]].copy()
-    out["service_class"] = sc
+    out["service_class"] = sc_code
     out["override_tra"] = 0.0
     out["override_rdm"] = 0.0
     return out
 
 
-def _compute_expected_from_overrides(engine, grid_df, cols):
+# ---------------------------------------------------------
+# Tariff JSON builder (FIXED)
+# ---------------------------------------------------------
+def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str:
+    engine = get_engine()
+
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text("""
+                SELECT logic_json, effective_date, end_date
+                FROM tariff_logic_versions
+                WHERE sc_code = :sc
+                ORDER BY effective_date
+            """),
+            {"sc": sc_code},
+        ).mappings().all()
+
+    if not rows:
+        raise RuntimeError(f"No tariff logic found for SC={sc_code}")
+
+    definitions = []
+
+    for r in rows:
+        raw_logic = r["logic_json"]
+
+        #  CRITICAL FIX: logic_json may already be a dict
+        if isinstance(raw_logic, str):
+            logic_obj = json.loads(raw_logic)
+        else:
+            logic_obj = raw_logic
+
+        metadata = logic_obj.get("metadata", {}) or {}
+        metadata.setdefault("sc_code", sc_code)
+        logic_obj["metadata"] = metadata
+
+        definitions.append(logic_obj)
+
+    fd, path = tempfile.mkstemp(
+        prefix=f"tariff_{sc_code}_{account_id}_",
+        suffix=".json"
+    )
+
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(definitions, f, indent=2)
+
+    return path
+
+
+# ---------------------------------------------------------
+# Calculation helper
+# ---------------------------------------------------------
+def _compute_expected(engine, grid_df, cols):
     rows = []
 
     for _, r in grid_df.iterrows():
@@ -128,39 +172,11 @@ def _compute_expected_from_overrides(engine, grid_df, cols):
         })
 
     df = pd.DataFrame(rows)
-    df["Expected Bill"] = df["Expected Bill"].round(2)
-    df["Actual Bill"] = df["Actual Bill"].round(2)
-    df["Variance"] = df["Variance"].round(2)
+    df[["Expected Bill", "Actual Bill", "Variance"]] = df[
+        ["Expected Bill", "Actual Bill", "Variance"]
+    ].round(2)
+
     return df
-
-
-# ---------------------------------------------------------
-# Tariff JSON builder
-# ---------------------------------------------------------
-def _build_tariff_json_from_db_for_account(account_id: str, sc_code: str) -> str:
-    engine = get_engine()
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text("""
-                SELECT logic_json, effective_date, end_date
-                FROM tariff_logic_versions
-                WHERE sc_code = :sc
-                ORDER BY effective_date
-            """),
-            {"sc": sc_code},
-        ).mappings().all()
-
-    defs = []
-    for r in rows:
-        obj = json.loads(r["logic_json"])
-        obj.setdefault("metadata", {})["sc_code"] = sc_code
-        defs.append(obj)
-
-    fd, path = tempfile.mkstemp(prefix=f"tariff_{sc_code}_{account_id}_", suffix=".json")
-    with os.fdopen(fd, "w") as f:
-        json.dump(defs, f, indent=2)
-
-    return path
 
 
 # ---------------------------------------------------------
@@ -172,26 +188,31 @@ def render_report_viewer():
     if "run_override_calc" not in st.session_state:
         st.session_state.run_override_calc = False
 
-    accounts = fetch_user_bills(None)["bill_account"].dropna().unique().tolist()
+    # ---------------- Account selection ----------------
+    accounts_df = fetch_user_bills(account_id=None)
+    accounts = sorted(accounts_df["bill_account"].dropna().unique())
     account = st.selectbox("Account Number", accounts)
 
+    # ---------------- SC selection ----------------
     sc_label = st.selectbox("Service Classification", list(ALLOWED_SC_MAP.keys()))
     sc_code = ALLOWED_SC_MAP[sc_label]
 
+    # ---------------- Load tariff logic ----------------
     tariff_path = _build_tariff_json_from_db_for_account(account, sc_code)
 
+    # ---------------- Load bills ----------------
     df = fetch_user_bills(account_id=account)
-    df = _clean_column_names_local(df)
+    df = _clean_column_names(df)
     df = df[df["service_class"].str.upper().str.replace("-", "") == sc_code]
 
-    cols = _resolve_bill_grid_columns(df)
+    cols = _resolve_bill_columns(df)
     if not cols:
         st.error("Required bill columns missing.")
         return
 
     grid_key = f"override_grid_{account}_{sc_code}"
     if grid_key not in st.session_state:
-        st.session_state[grid_key] = _build_bill_override_grid(df, cols, sc_code)
+        st.session_state[grid_key] = _build_override_grid(df, cols, sc_code)
 
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
@@ -211,9 +232,10 @@ def render_report_viewer():
     if st.button("Calculate Expected Bill", type="primary"):
         st.session_state.run_override_calc = True
 
+    # ---------------- Run calculation ----------------
     if st.session_state.run_override_calc:
         engine = AuditEngine(tariff_path)
-        result_df = _compute_expected_from_overrides(engine, edited, cols)
+        result_df = _compute_expected(engine, edited, cols)
 
         st.dataframe(result_df, use_container_width=True)
 
