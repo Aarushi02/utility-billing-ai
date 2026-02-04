@@ -16,7 +16,7 @@ import pandas as pd
 from sqlalchemy import text
 from src.utils.llm_client import LLMClient
 from src.utils.config import OPENAI_API_KEY, OPENAI_MODEL
-from src.database.db_utils import insert_bill_validation_result
+from src.database.utils.anomelies_and_bill_validation_utils import insert_bill_validation_result
 from src.database.utils.user_bills_utils import fetch_user_bills
 from src.utils.logger import get_logger
 
