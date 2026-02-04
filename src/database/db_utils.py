@@ -522,6 +522,8 @@ def get_all_tariff_versions():
         session.close()
 
 
+
+
 def fetch_logic_for_audit(sc_code: str, bill_date: Union[str, datetime.date]) -> Optional[dict]:
     """
     Time Machine lookup: find the logic active on bill_date for sc_code.
