@@ -1,5 +1,5 @@
 import streamlit as st
-from src.database.db_utils import (
+from src.database.utils.tariff_and_versions_utils import (
     get_distinct_sc_codes,
     get_versions_for_sc,
     get_logic_for_sc_version,
