@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.utils.logger import get_logger
 
-from src.database.db_utils import (
+from src.database.utils.variables_tariff_rates import (
     insert_sbc_rate,
     insert_tra_rate,
     insert_rdm_rate,
