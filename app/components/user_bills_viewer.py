@@ -4,7 +4,7 @@ from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode
 
 # Import your DB utils
 # (Ensure these paths match your project structure)
-from src.database.db_utils import (
+from src.database.utils.user_bills_utils import (
     fetch_all_account_numbers,
     fetch_user_bills,
     fetch_user_bills_with_issues,

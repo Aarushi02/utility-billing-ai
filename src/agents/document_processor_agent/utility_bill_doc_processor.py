@@ -26,7 +26,7 @@ import pandas as pd
 from src.utils.helpers import ensure_file_exists, clean_column_names
 from src.utils.data_paths import get_file_path
 from src.utils.logger import get_logger
-from src.database.db_utils import insert_user_bill
+from src.database.utils.user_bills_utils import insert_user_bill
 
 logger = get_logger(__name__)
 

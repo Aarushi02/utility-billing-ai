@@ -8,7 +8,7 @@ import pandas as pd
 
 from src.utils.logger import get_logger
 from src.utils.helpers import clean_column_names
-from src.database.db_utils import fetch_user_bills
+from src.database.utils.user_bills_utils import fetch_user_bills
 
 # ---- Domain logic: updated AuditEngine ------------------------------------
 try:

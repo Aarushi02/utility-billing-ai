@@ -16,7 +16,8 @@ import pandas as pd
 from sqlalchemy import text
 from src.utils.llm_client import LLMClient
 from src.utils.config import OPENAI_API_KEY, OPENAI_MODEL
-from src.database.db_utils import  fetch_user_bills,insert_bill_validation_result
+from src.database.db_utils import insert_bill_validation_result
+from src.database.utils.user_bills_utils import fetch_user_bills
 from src.utils.logger import get_logger
 
 
@@ -35,7 +36,8 @@ except Exception as e:
 # Example: direct insert helpers you can call from scripts or REPL
 # Use these helpers to write single records without manual SQL.
 #
-# from src.database.db_utils import insert_user_bill, insert_validation_result
+# from src.database.utils.user_bills_utils import insert_user_bill
+# from src.database.db_utils import insert_validation_result
 #
 # Example: insert a validation result directly:
 # insert_validation_result({
@@ -179,7 +181,7 @@ Output ONLY the JSON. No extra text.
 # ============= DB HELPERS =============
 
 def load_user_bills_from_db(bill_account: str, limit_rows: int | None = None) -> pd.DataFrame:
-    """Load billing history for a single bill_account by reusing db_utils.fetch_user_bills.
+    """Load billing history for a single bill_account by reusing user_bills_utils.fetch_user_bills.
 
     fetch_user_bills returns a limited set of recent UserBills rows; we filter the
     returned DataFrame for the requested `bill_account`. If `limit_rows` is not

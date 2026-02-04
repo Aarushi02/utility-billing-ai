@@ -9,7 +9,8 @@ import streamlit as st
 from sqlalchemy import text
 
 from src.utils.logger import get_logger
-from src.database.db_utils import fetch_user_bills, get_engine
+from src.database.db_utils import get_engine
+from src.database.utils.user_bills_utils import fetch_user_bills
 
 try:
     from src.agents.audit_calculation_agent.calc_engine_updated import AuditEngine
