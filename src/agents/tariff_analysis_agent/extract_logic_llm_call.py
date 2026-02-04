@@ -20,10 +20,10 @@ from src.agents.tariff_analysis_agent import prompts_to_extract_logic as tariff_
 
 
 # Use centralized DB utilities (ORM)
-from src.database.db_utils import (
+from src.database.db_utils import get_engine
+from src.database.utils.tariff_and_versions_utils import (
     register_tariff_document,
     save_tariff_logic_version,
-    get_engine,
 )
 
 load_dotenv()
