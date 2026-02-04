@@ -1,6 +1,6 @@
 # src/agents/tariff_analysis/extract_pdf.py
 """
-Step 1.3 - Extract text and tables from PDF (config-driven).
+Step 1.3 – Extract text and tables from PDF (config-driven).
 This creates a machine-readable JSON used by later stages.
 """
 
@@ -88,7 +88,7 @@ def save_output(data, path: Path):
     # Upload directly to S3 (no local storage)
     s3_key = get_s3_key("processed", path.name)
     if upload_json_to_s3({"pages": data}, s3_key):
-        print(f"Uploaded to S3: {s3_key}")
+        print(f"✅ Uploaded to S3: {s3_key}")
     else:
         raise Exception(f"Failed to upload to S3: {s3_key}")
 
@@ -105,15 +105,15 @@ if __name__ == "__main__":
         candidates = sorted(glob.glob(str(PROJECT_ROOT / "data" / "raw" / "*.pdf")))
         if len(candidates) == 1:
             pdf_to_use = Path(candidates[0])
-            print(f"Using found PDF: {pdf_to_use}")
+            print(f"ℹ️  Using found PDF: {pdf_to_use}")
         elif len(candidates) > 1:
-            print("No configured PDF found. Multiple PDFs exist under data/raw/; please pass the desired file as an argument or update PDF_PATH.")
+            print("❌ No configured PDF found. Multiple PDFs exist under data/raw/; please pass the desired file as an argument or update PDF_PATH.")
             print("Available PDFs:")
             for p in candidates:
                 print(" -", p)
             sys.exit(1)
         else:
-            print(f"File not found: {PDF_PATH}\nExpected a PDF at that path, or provide one as an argument.\nChecked directory: {PROJECT_ROOT / 'data' / 'raw'}")
+            print(f"❌ File not found: {PDF_PATH}\nExpected a PDF at that path, or provide one as an argument.\nChecked directory: {PROJECT_ROOT / 'data' / 'raw'}")
             # show files present in data/raw for debugging
             existing = sorted(glob.glob(str(PROJECT_ROOT / "data" / "raw" / "*")))
             if existing:
@@ -124,16 +124,16 @@ if __name__ == "__main__":
                 print("data/raw/ is empty or missing. Place PDFs there or pass a path to the script.")
             sys.exit(1)
 
-    print("Extracting text with pdfplumber...")
+    print("🔍 Extracting text with pdfplumber...")
     pages_data = extract_with_pdfplumber(pdf_to_use)
 
-    print("Extracting tables with Camelot...")
+    print("📊 Extracting tables with Camelot...")
     tables = extract_tables_with_camelot(pdf_to_use)
 
-    print("Merging results...")
+    print("🧩 Merging results...")
     merged = merge_text_and_tables(pages_data, tables)
 
-    print("Saving structured output...")
+    print("💾 Saving structured output...")
     save_output(merged, OUTPUT_PATH)
 
-    print("Done. Proceed to Step 1.4 - Dynamic Section Segmentation.")
+    print("✅ Done. Proceed to Step 1.4 – Dynamic Section Segmentation.")
