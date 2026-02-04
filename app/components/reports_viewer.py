@@ -12,6 +12,9 @@ from src.utils.logger import get_logger
 from src.database.db_utils import get_engine
 from src.database.utils.user_bills_utils import fetch_user_bills
 
+from src.agents.Variable_Updates.temp import store_override_values
+
+
 try:
     from src.agents.audit_calculation_agent.calc_engine_updated import AuditEngine
 except Exception:
@@ -116,6 +119,9 @@ def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataF
     out["override_tra"] = 0.0
     out["override_rdm"] = 0.0
     return out
+
+
+
 
 
 def _build_tariff_json_from_db(account_id: str, sc_code: str) -> str:
@@ -292,7 +298,11 @@ def render_report_viewer():
             ),
         },
     )
-
+    #---- Storing OVERRIDE RATES ----
+    store_override_values(
+    st.session_state[grid_key],
+    bill_date_col=cols["bill_date"],
+)
     _safe_update_grid_state(grid_key, edited)
 
     st.caption("Tip: Press Enter or click outside the cell to commit a value.")
@@ -300,6 +310,7 @@ def render_report_viewer():
     if st.button("Calculate Expected Bill", type="primary"):
         st.session_state.run_override_calc = True
 
+   
     # ---- CALCULATION ----
     if st.session_state.run_override_calc:
         engine = AuditEngine(tariff_path)
