@@ -37,7 +37,7 @@ from src.database.db_utils import (
 )
 from src.utils.helpers import load_csv, save_csv
 from src.utils.data_paths import get_file_path
-from src.database.db_utils import start_pipeline_run, update_pipeline_run
+from src.database.utils.airflow_dag_utils import start_pipeline_run, update_pipeline_run
 
 logger = get_logger(__name__)
 
