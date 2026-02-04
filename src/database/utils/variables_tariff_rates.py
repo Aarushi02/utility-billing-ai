@@ -141,3 +141,77 @@ def insert_ram_rate(record: dict):
 	finally:
 		logger.info("end of insert_ram_rate")
 		session.close()
+
+
+def fetch_rates_for_dates(table_name: str, sc_code: str, effective_dates: list):
+	"""
+	Fetch rates for a given SC code and a list of effective dates.
+	
+	Parameters
+	----------
+	table_name : str
+		One of: "sbc", "tra", "rdm", "ram"
+	sc_code : str
+		Service class code
+	effective_dates : list
+		List of dates (date objects) or ISO date strings
+	
+	Returns
+	-------
+	list of dict
+		Each item has: effective_date (YYYY-MM-DD), rate
+	"""
+	logger.info("start of fetch_rates_for_dates")
+	model_map = {
+		"sbc": SBCSystemBenefitsCharge,
+		"tra": TRATransmissionRevenueAdjustment,
+		"rdm": RDMRevenueDecouplingMechanism,
+		"ram": RAMRateAdjustmentMechanism,
+	}
+
+	model = model_map.get((table_name or "").lower())
+	if model is None:
+		logger.warning(f"Unknown table_name={table_name}")
+		return []
+
+	if not effective_dates:
+		return []
+
+	# Normalize dates
+	normalized_dates = []
+	for d in effective_dates:
+		if isinstance(d, str):
+			normalized_dates.append(dateparser.parse(d).date())
+		else:
+			normalized_dates.append(d)
+
+	# Keep a set for filtering
+	date_set = set(normalized_dates)
+
+	session = get_session()
+	try:
+		rows = (
+			session.query(model)
+			.filter(model.sc_code == sc_code)
+			.filter(model.effective_date.in_(date_set))
+			.all()
+		)
+		# Map to dict for quick lookup
+		row_map = {
+			r.effective_date: r.rate for r in rows
+		}
+		# Preserve input order, return only available dates
+		results = []
+		for d in normalized_dates:
+			if d in row_map:
+				results.append({
+					"effective_date": d.strftime("%Y-%m-%d"),
+					"rate": row_map[d],
+				})
+		return results
+	except SQLAlchemyError as e:
+		logger.error(f"Failed to fetch rates for {table_name}: {e}")
+		return []
+	finally:
+		logger.info("end of fetch_rates_for_dates")
+		session.close()
