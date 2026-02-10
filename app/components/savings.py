@@ -54,7 +54,7 @@ def _to_excel_bytes(df: pd.DataFrame, sheet_name="Savings"):
 # SAVINGS COMPONENT
 # =========================================================
 
-def savings():
+def render_savings():
     st.header("Service Classification Savings Analysis")
 
     st.caption(
