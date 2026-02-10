@@ -54,7 +54,7 @@ def _to_excel_bytes(df: pd.DataFrame, sheet_name="Savings"):
 # SAVINGS COMPONENT
 # =========================================================
 
-def render_savings():
+def savings():
     st.header("Service Classification Savings Analysis")
 
     st.caption(
@@ -88,11 +88,9 @@ def render_savings():
 
         required_cols = [
             "bill_date",
-            "billed_kwh",
-            "billed_demand",
-            "tra",
-            "rdm",
-            "bill_amount",   # <-- already calculated
+            "kwh",
+            "demand_kw",
+            "expected_bill",   # <-- already calculated
         ]
 
         _require_columns(old_df, required_cols)
@@ -113,8 +111,8 @@ def render_savings():
         )
 
         merged["monthly_savings"] = (
-            merged["bill_amount_sc3"]
-            - merged["bill_amount_sc2d"]
+            merged["expected_sc3"]
+            - merged["expected_bill_sc2d"]
         )
 
         # =================================================
@@ -123,15 +121,15 @@ def render_savings():
 
         final = pd.DataFrame({
             "Month": merged["month"],
-            "SC3 Demand": merged["billed_demand_sc3"],
-            "SC2D Demand": merged["billed_demand_sc2d"],
-            "KWH": merged["billed_kwh_sc3"],
+            "SC3 Demand": merged["demand_kw_sc3"],
+            "SC2D Demand": merged["demand_kw_sc2d"],
+            "KWH": merged["kwh_sc3"],
             "TRA-SC3": merged["tra_sc3"],
             "RDM-SC3": merged["rdm_sc3"],
             "TRA-SC2D": merged["tra_sc2d"],
             "RDM-SC2D": merged["rdm_sc2d"],
-            "SC3 (Old Rate)": merged["bill_amount_sc3"].round(2),
-            "SC2D (New Rate)": merged["bill_amount_sc2d"].round(2),
+            "SC3 (Old Rate)": merged["expected_bill_sc3"].round(2),
+            "SC2D (New Rate)": merged["expected_bill_sc2d"].round(2),
             "Monthly Savings": merged["monthly_savings"].round(2),
         })
 
