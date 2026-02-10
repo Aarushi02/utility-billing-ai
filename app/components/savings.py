@@ -33,11 +33,11 @@ def _prepare_monthly(df: pd.DataFrame) -> pd.DataFrame:
     return df[
         [
             "month",
-            "billed_demand",
-            "billed_kwh",
+            "demand_kw",
+            "kwh",
             "tra",
             "rdm",
-            "bill_amount",
+            "expected_bill",
         ]
     ]
 
@@ -89,6 +89,8 @@ def render_savings():
         required_cols = [
             "bill_date",
             "kwh",
+            "tra",
+            "rdm",
             "demand_kw",
             "expected_bill",   # <-- already calculated
         ]
@@ -111,7 +113,7 @@ def render_savings():
         )
 
         merged["monthly_savings"] = (
-            merged["expected_sc3"]
+            merged["expected_bill_sc3"]
             - merged["expected_bill_sc2d"]
         )
 
