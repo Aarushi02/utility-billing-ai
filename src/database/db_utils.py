@@ -90,6 +90,9 @@ def insert_raw_bill_document(metadata: dict):
     """
     Inserts a new raw document record (e.g., uploaded file metadata).
 
+    If a document with the same file_name already exists,
+    an error is logged and insertion is skipped.
+
     Parameters
     ----------
     metadata : dict
@@ -97,23 +100,47 @@ def insert_raw_bill_document(metadata: dict):
     """
     logger.info("start of insert_raw_bill_document")
     session = get_session()
-    logger.info("session created for insert_raw_bill_document") 
+    logger.info("session created for insert_raw_bill_document")
+
     try:
+        file_name = metadata.get("file_name")
+
+        if not file_name:
+            logger.error("File name is required in metadata.")
+            raise ValueError("File name is required.")
+
+        # ----------------------------------------------------
+        # Step 1: Check if exact same bill already exists
+        # ----------------------------------------------------
+        existing_doc = (
+            session.query(RawBillDocument)
+            .filter(RawBillDocument.file_name == file_name)
+            .first()
+        )
+
+        if existing_doc:
+            error_msg = f"Duplicate bill detected: '{file_name}' already exists (id={existing_doc.id})"
+            logger.error(error_msg)
+            raise ValueError(error_msg)
+
+        # ----------------------------------------------------
+        # Step 2: Insert new document if no duplicate found
+        # ----------------------------------------------------
         doc = RawBillDocument(**metadata)
-        logger.info(f"RawBillDocument instance created: {doc}")
-        
         session.add(doc)
         session.commit()
-        logger.info(f"Inserted raw document: {metadata.get('file_name')} (id={doc.id})")
+
+        logger.info(f"Inserted raw document: {file_name} (id={doc.id})")
         return doc.id
-    except SQLAlchemyError as e:
+
+    except (SQLAlchemyError, ValueError) as e:
         logger.error(f"Failed to insert raw document: {e}")
         session.rollback()
         return None
+
     finally:
         logger.info("end of insert_raw_bill_document")
         session.close()
-
 
 # ----------------------------------------------------------------------
 # 3) Fetch functions
