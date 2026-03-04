@@ -1,7 +1,23 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from src.api.schemas.airflow import AirflowRunStatusResponse, AirflowTriggerResponse
 from src.services.airflow_service import AirflowService
+
+
+class AirflowTriggerResponse(BaseModel):
+    dag_run_id: str
+
+
+class AirflowTaskStatus(BaseModel):
+    task_id: str
+    state: str | None = None
+
+
+class AirflowRunStatusResponse(BaseModel):
+    dag_run_id: str
+    state: str
+    tasks: list[AirflowTaskStatus]
+    raw: dict[str, object] | None = None
 
 
 router = APIRouter(prefix="/airflow")

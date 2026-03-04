@@ -1,11 +1,22 @@
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
-from src.api.schemas.tariffs import (
-    TariffLogicResponse,
-    TariffScCodesResponse,
-    TariffVersionsResponse,
-)
 from src.services.tariff_service import TariffService
+
+
+class TariffScCodesResponse(BaseModel):
+    sc_codes: list[str]
+
+
+class TariffVersionsResponse(BaseModel):
+    sc_code: str
+    versions: list[str]
+
+
+class TariffLogicResponse(BaseModel):
+    sc_code: str
+    effective_date: str
+    logic: dict[str, object]
 
 
 router = APIRouter(prefix="/tariffs")

@@ -2,15 +2,54 @@ import streamlit as st
 from pathlib import Path
 from datetime import datetime
 import pandas as pd
-import tempfile
+import requests
+import time
 
-from src.database.db_utils import insert_raw_bill_document
-from src.agents.document_processor_agent.utility_bill_doc_processor import process_bill
+from src.utils.config import get_env
 from src.utils.aws_app import (
     upload_fileobject_to_s3,
     get_s3_key,
-    download_to_temp
 )
+
+
+API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
+
+
+def _post_api_json(path: str, payload: dict):
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
+
+
+def _create_raw_document(metadata: dict) -> int | None:
+    body = _post_api_json("/api/v1/uploads/raw-documents", metadata)
+    return body.get("id")
+
+
+def _run_bill_processing(s3_key: str, document_id: int | None = None) -> dict:
+    return _post_api_json(
+        "/api/v1/processing/bills/run",
+        {"s3_key": s3_key, "document_id": document_id},
+    )
+
+
+def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None) -> dict:
+    return _post_api_json(
+        "/api/v1/processing/tariffs/run",
+        {"s3_key": s3_key, "raw_bill_document_id": raw_bill_document_id},
+    )
 
 
 def render_file_uploader():
@@ -49,14 +88,6 @@ def render_file_uploader():
                 st.error(f"Failed to upload {file.name} to S3")
                 st.stop()
             
-            # Download to temp for processing
-            temp_path = download_to_temp(s3_key)
-            if not temp_path:
-                st.error(f"Failed to download {file.name} from S3 for processing")
-                st.stop()
-            
-            file_path = Path(temp_path)
-
             # Log upload in DB
             # metadata = {
             #     "file_name": file.name,
@@ -70,16 +101,17 @@ def render_file_uploader():
             metadata = {
                 "file_name": file.name,
                 "file_type": Path(file.name).suffix.lower(),
-                "upload_date": datetime.utcnow(),
+                "upload_date": datetime.utcnow().isoformat(),
                 "source": "User Upload (Bill)",
                 "status": "uploaded",
                 
             }
 
             try:
-                doc_id= insert_raw_bill_document(metadata)
+                doc_id = _create_raw_document(metadata)
             except Exception as e:
                 st.error(f"Error logging bill file {file.name}: {e}")
+                doc_id = None
 
             # -------------------------
             # 🔥 AUTO-PROCESS THE FILE
@@ -130,14 +162,9 @@ def render_file_uploader():
                     """.format(file.name), unsafe_allow_html=True)
                 
                 # Process the file
-                df, total_anomalies = process_bill(file_path, document_id=doc_id)
-                
-                # Clean up temp file
-                import os
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass
+                result = _run_bill_processing(s3_key=s3_key, document_id=doc_id)
+                total_anomalies = int(result.get("total_anomalies", 0))
+                df = pd.DataFrame(result.get("rows", []))
                 
                 # Clear the processing overlay and re-enable page
                 processing_placeholder.empty()
@@ -263,13 +290,6 @@ def render_file_uploader():
                     if not upload_fileobject_to_s3(file, s3_key):
                         raise Exception(f"Failed to upload {file.name} to S3")
                     
-                    # ---------- DOWNLOAD TO TEMP FOR PROCESSING ----------
-                    temp_path = download_to_temp(s3_key)
-                    if not temp_path:
-                        raise Exception(f"Failed to download {file.name} from S3")
-                    
-                    file_path = Path(temp_path)
-
                     # ---------- LOG UPLOAD IN DB ----------
                     # metadata = {
                     #     "file_name": file.name,
@@ -283,15 +303,16 @@ def render_file_uploader():
                     metadata = {
                         "file_name": file.name,
                         "file_type": Path(file.name).suffix.lower(),
-                        "upload_date": datetime.now(),
+                        "upload_date": datetime.now().isoformat(),
                         "source": "User Upload (Tariff)",
                         "status": "uploaded",
                        
                     }
                     try:
-                        tariff_doc_id = insert_raw_bill_document(metadata)
+                        tariff_doc_id = _create_raw_document(metadata)
                     except Exception as e:
                         st.error(f"Error logging tariff file {file.name}: {e}")
+                        tariff_doc_id = None
 
                     # ---------- FULL SCREEN OVERLAY ----------
                     # Create a full-page modal overlay
@@ -339,16 +360,8 @@ def render_file_uploader():
                         """.format(file.name), unsafe_allow_html=True)
                     
                     # ---------- RUN PIPELINE ----------
-                    from src.orchestrator.pipeline_runner import run_tariff_pipeline
-                    results = run_tariff_pipeline(file_path, raw_bill_document_id=tariff_doc_id)
+                    results = _run_tariff_processing(s3_key=s3_key, raw_bill_document_id=tariff_doc_id)
                     
-                    # Clean up temp file
-                    import os
-                    try:
-                        os.unlink(temp_path)
-                    except:
-                        pass
-
                     # Clear the processing overlay and re-enable page
                     processing_placeholder.empty()
                     st.markdown("""

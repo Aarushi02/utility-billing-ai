@@ -1,6 +1,9 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 
-from src.api.schemas.common import HealthResponse
+
+class HealthResponse(BaseModel):
+    status: str
 
 
 router = APIRouter()

@@ -20,13 +20,13 @@ We will adopt a **hybrid decoupled architecture**:
 
 - Keep **Streamlit** as the current UI framework.
 - Introduce **FastAPI** as the backend API boundary.
-- Move business logic out of Streamlit into service/repository layers.
+- Move business logic out of Streamlit into service layer.
 - Migrate incrementally feature-by-feature (Strangler pattern).
 
 ## 3. Target Architecture
 
 ```text
-Streamlit UI --> FastAPI (/api/v1) --> Services --> Repositories --> DB/S3
+Streamlit UI --> FastAPI (/api/v1) --> Services --> DB Utils / Agent Logic --> DB/S3
                                       |
                                       +--> Worker/Orchestrator (async jobs)
 ```
@@ -36,7 +36,7 @@ Streamlit UI --> FastAPI (/api/v1) --> Services --> Repositories --> DB/S3
 ### In Scope (Now)
 1. Create FastAPI app and `/api/v1` routes for existing Streamlit features.
 2. Extract business logic from UI into `src/services`.
-3. Extract DB access into `src/repositories`.
+3. Keep DB access centralized in backend services via `src/database/*` utilities.
 4. Add job endpoints for long-running workflows.
 5. Add API contracts (Pydantic models), logging, health checks, tests.
 
@@ -61,7 +61,7 @@ Streamlit UI --> FastAPI (/api/v1) --> Services --> Repositories --> DB/S3
 
 ### Phase 2 (Week 3-4): First feature migration
 - Pick one feature (e.g., tariff details viewer).
-- Move logic to service/repository.
+- Move logic to service layer.
 - Streamlit calls API endpoint instead of direct backend calls.
 
 ### Phase 3 (Week 5-6): Jobs/workflows
@@ -129,7 +129,7 @@ Create:
 - `src/api/routers/bills.py`
 - `src/api/routers/reports.py`
 - `src/api/routers/jobs.py`
-- `src/api/schemas/*` (Pydantic contracts)
+- Router-local Pydantic contracts at the top of each router file
 
 Rules:
 - All endpoints under `/api/v1`.
@@ -147,16 +147,16 @@ Rules:
 - All business logic lives here.
 - API routers orchestrate services only.
 
-### 11.3 Add Repository Layer
+### 11.3 Data Access Rules
 
-Create:
-- `src/repositories/tariff_repository.py`
-- `src/repositories/billing_repository.py`
-- `src/repositories/run_repository.py`
+Use:
+- `src/database/db_utils.py`
+- `src/database/utils/*`
 
 Rules:
-- All SQL/DB calls move here.
-- Services never execute raw SQL directly.
+- Keep all DB access inside backend (`src/services` + `src/database/*`), never in UI.
+- Services may call DB utility functions directly.
+- Prefer shared utility functions over duplicated query logic.
 
 ### 11.4 Add Async Job Pattern for Long-Running Work
 
@@ -205,7 +205,7 @@ A feature is considered decoupled only if all are true:
 - Streamlit page has zero imports from `src.database`, `src.agents`, `src.orchestrator`.
 - Streamlit page calls `/api/v1/*` only.
 - API endpoint has request/response schema.
-- Service and repository tests exist.
+- Service and API tests exist.
 - Endpoint has success and error-path tests.
 
 ## 14. Hosting and Deployment Model (UI + API + Workers)
@@ -233,20 +233,20 @@ A feature is considered decoupled only if all are true:
 To prevent re-coupling:
 - Block PRs where `app/**` imports from `src.database`, `src.agents`, `src.orchestrator`.
 - Require new backend functionality to be exposed via service + API route.
-- Keep `src/api`, `src/services`, `src/repositories` ownership explicit in code reviews.
+- Keep `src/api`, `src/services`, `src/database` ownership explicit in code reviews.
 
 
 ## 16. Layer Responsibilities
 
 - **Routers:** HTTP endpoint layer (URL mapping). Example: `src/api/routers/tariffs.py`.
 - **Services:** business logic/use-cases (rules/workflow logic, no HTTP details). Example: `src/services/tariff_service.py`.
-- **Repositories:** data access only (DB queries, persistence). Example: `src/repositories/tariff_repository.py`.
-- **Schemas:** request/response contracts (Pydantic models for API shape). Example: `src/api/schemas/tariffs.py`.
+- **DB Utilities:** reusable data-access helpers (queries/persistence). Examples: `src/database/db_utils.py`, `src/database/utils/tariff_and_versions_utils.py`.
+- **Router-local Schemas:** request/response contracts (Pydantic models) declared at the top of each router file. Example: `src/api/routers/tariffs.py`.
 
 ## 17. Decoupling Flow
 
 - **Before:** Streamlit page directly imports DB utilities.
-- **Now:** Streamlit → API router → service → repository → DB.
+- **Now:** Streamlit → API router → service → DB utils/agent logic → DB/S3.
 - **First migrated example:** Tariff page (`app/components/tariff_details_viewer.py`).
 
 ## 18. Current Implementation Status (March 2026)
@@ -262,9 +262,9 @@ Completed migrations to API-backed UI flows:
 
 Backend structure currently in place:
 
-- `src/api/*` (entrypoint, routers, schemas)
+- `src/api/*` (entrypoint, routers with local request/response models)
 - `src/services/*` (workflow/report/tariff/billing/airflow services)
-- `src/repositories/*` (billing/tariff/run repositories)
+- `src/database/*` (db utils/models/helpers)
 
 ## 19. Frontend Resilience Pattern (Added)
 

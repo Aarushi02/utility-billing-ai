@@ -1,7 +1,21 @@
 from fastapi import APIRouter
+from pydantic import BaseModel
 
-from src.api.schemas.bills import BillAccountsResponse, BillIssuesResponse, BillsResponse
 from src.services.billing_service import BillingService
+
+
+class BillAccountsResponse(BaseModel):
+    accounts: list[str]
+
+
+class BillsResponse(BaseModel):
+    account_id: str
+    bills: list[dict[str, object]]
+
+
+class BillIssuesResponse(BaseModel):
+    account_id: str
+    issues: list[dict[str, object]]
 
 
 router = APIRouter(prefix="/bills")

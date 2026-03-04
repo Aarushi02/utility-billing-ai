@@ -2,18 +2,38 @@ import threading
 from datetime import datetime
 from uuid import uuid4
 
-from src.repositories.run_repository import RunRepository
+from src.database.db_utils import get_session
+from src.database.models import PipelineRun
 
 
 class WorkflowService:
     _jobs: dict[str, dict] = {}
     _jobs_lock = threading.Lock()
 
-    def __init__(self, run_repository: RunRepository | None = None) -> None:
-        self.run_repository = run_repository or RunRepository()
-
     def get_recent_runs(self, limit: int = 20) -> list[dict]:
-        return self.run_repository.list_recent_runs(limit=limit)
+        session = get_session()
+        try:
+            rows = (
+                session.query(PipelineRun)
+                .order_by(PipelineRun.created_at.desc())
+                .limit(limit)
+                .all()
+            )
+            return [
+                {
+                    "id": row.id,
+                    "dag_id": row.dag_id,
+                    "start_time": row.start_time,
+                    "end_time": row.end_time,
+                    "status": row.status,
+                    "total_runtime": row.total_runtime,
+                    "error_msg": row.error_msg,
+                    "created_at": row.created_at,
+                }
+                for row in rows
+            ]
+        finally:
+            session.close()
 
     def submit_job(self, job_type: str = "full_workflow") -> dict:
         job_id = str(uuid4())

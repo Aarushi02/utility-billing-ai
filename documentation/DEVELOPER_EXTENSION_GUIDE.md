@@ -6,50 +6,40 @@ This guide explains how to add new business logic, new API endpoints, and new St
 
 Use this chain for all new features:
 
-`Streamlit page` -> `API router` -> `service` -> `repository` -> `DB/external system`
+`Streamlit page` -> `API router` -> `service` -> `DB utils/agent/orchestrator` -> `DB/external system`
 
 Rules:
 - Streamlit components should not import `src.database`, `src.agents`, or `src.orchestrator` directly for migrated patterns.
 - Routers contain HTTP mapping + validation only.
 - Services contain business rules.
-- Repositories contain data access only.
+- Data access stays in backend (`src/services` + `src/database/*`) only.
 
 ---
 
 ## 2) Add New Business Logic (Backend)
 
-### Step A: Add/extend repository
-
-Location: `src/repositories/`
-
-Purpose:
-- encapsulate queries and persistence operations.
-
-Example filename:
-- `src/repositories/customer_repository.py`
-
-### Step B: Add/extend service
+### Step A: Add/extend service
 
 Location: `src/services/`
 
 Purpose:
-- orchestrate repository calls and business rules.
+- orchestrate DB utility calls and business rules.
 - no HTTP-specific code.
 
 Example filename:
 - `src/services/customer_service.py`
 
-### Step C: Add schema contracts
+### Step B: Add schema contracts (inside router)
 
-Location: `src/api/schemas/`
+Location: top of `src/api/routers/<domain>.py`
 
 Purpose:
-- define request/response shape with Pydantic models.
+- define request/response shape with Pydantic models close to endpoint logic.
 
-Example filename:
-- `src/api/schemas/customers.py`
+Example:
+- `class CustomersResponse(BaseModel): ...` in `src/api/routers/customers.py`
 
-### Step D: Add router
+### Step C: Add router
 
 Location: `src/api/routers/`
 
@@ -59,7 +49,7 @@ Purpose:
 Example filename:
 - `src/api/routers/customers.py`
 
-### Step E: Register router
+### Step D: Register router
 
 File:
 - `src/api/main.py`
@@ -72,9 +62,9 @@ Add include line:
 ## 3) Add New API Endpoint
 
 Checklist:
-1. Define request/response model in `src/api/schemas/<domain>.py`.
+1. Define request/response models at the top of `src/api/routers/<domain>.py`.
 2. Add service method in `src/services/<domain>_service.py`.
-3. Add repository method if DB access is needed.
+3. Add/extend DB utility function in `src/database/db_utils.py` or `src/database/utils/*` if needed.
 4. Expose endpoint in `src/api/routers/<domain>.py`.
 5. Register router in `src/api/main.py`.
 6. Verify endpoint in Swagger: `/docs`.
@@ -134,9 +124,9 @@ For local run:
 
 - API entrypoint: `src/api/main.py`
 - Routers: `src/api/routers/`
-- Schemas: `src/api/schemas/`
+- Router-local schema models: top of `src/api/routers/<domain>.py`
 - Services: `src/services/`
-- Repositories: `src/repositories/`
+- DB utilities: `src/database/` and `src/database/utils/`
 - Streamlit pages: `app/components/`
 - App navigation: `app/streamlit_app.py`
 - Deployment runbook: `RUNBOOK_DEPLOYMENT.md`
@@ -148,14 +138,13 @@ For local run:
 
 Use this order:
 
-1. `src/repositories/example_repository.py`
-2. `src/services/example_service.py`
-3. `src/api/schemas/example.py`
-4. `src/api/routers/example.py`
-5. update `src/api/main.py`
-6. create `app/components/example_viewer.py`
-7. update `app/streamlit_app.py`
-8. run and verify in `/docs` and Streamlit page
+1. `src/services/example_service.py`
+2. `src/database/utils/example_utils.py` (if new shared data access needed)
+3. add request/response models in `src/api/routers/example.py`
+4. update `src/api/main.py`
+5. create `app/components/example_viewer.py`
+6. update `app/streamlit_app.py`
+7. run and verify in `/docs` and Streamlit page
 
 ---
 

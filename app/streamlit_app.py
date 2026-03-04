@@ -7,6 +7,7 @@ Main Streamlit entry point for Utility Billing AI.
 import sys
 import os
 from pathlib import Path
+import requests
 
 def _add_path_front(p: Path):
     p_str = str(p)
@@ -62,18 +63,19 @@ from app.components.login import render_login_page
 from app.components.dashboard import render_dashboard
 
 # -----------------------------------------------------
-# INITIALIZE DATABASE (ONCE PER SESSION)
+# CHECK BACKEND READINESS (ONCE PER SESSION)
 # -----------------------------------------------------
 @st.cache_resource
-def initialize_database():
+def initialize_backend():
+    api_base_url = os.environ.get("API_BASE_URL", "http://localhost:8000")
     try:
-        from src.database.init_db import init_db
-        init_db()
-        logger.info("✅ Database initialized successfully")
+        response = requests.get(f"{api_base_url}/api/v1/health/ready", timeout=10)
+        response.raise_for_status()
+        logger.info("✅ Backend is ready")
     except Exception as e:
-        logger.error(f"⚠️ Database initialization error: {e}")
+        logger.warning(f"⚠️ Backend readiness check failed: {e}")
 
-initialize_database()
+initialize_backend()
 
 # -----------------------------------------------------
 # AUTHENTICATION CHECK
