@@ -1,14 +1,32 @@
 import streamlit as st
 import pandas as pd
+import requests
+import time
 from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode, DataReturnMode, JsCode
 
-# Import your DB utils
-# (Ensure these paths match your project structure)
-from src.database.utils.user_bills_utils import (
-    fetch_all_account_numbers,
-    fetch_user_bills,
-    fetch_user_bills_with_issues,
-)
+from src.utils.config import get_env
+
+
+API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_api_json(path: str, params: dict | None = None):
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.get(f"{API_BASE_URL}{path}", params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
 
 # ---------------------------------------------------------
 # POPUP COMPONENT (Streamlit Dialog)
@@ -190,7 +208,12 @@ def render_user_bills_viewer():
     # ===========================
     # Account Selection
     # ===========================
-    accounts = fetch_all_account_numbers()
+    try:
+        accounts = _get_api_json("/api/v1/bills/accounts").get("accounts", [])
+    except requests.RequestException as exc:
+        st.error(f"Unable to load accounts from API: {exc}")
+        return
+
     if not accounts:
         st.warning("No accounts found in database.")
         return
@@ -200,12 +223,19 @@ def render_user_bills_viewer():
     # ===========================
     # Fetch Data
     # ===========================
-    bills_df = fetch_user_bills(account_id)
+    try:
+        bills_data = _get_api_json("/api/v1/bills", params={"account_id": account_id}).get("bills", [])
+        issues_data = _get_api_json("/api/v1/bills/issues", params={"account_id": account_id}).get("issues", [])
+    except requests.RequestException as exc:
+        st.error(f"Unable to load billing data from API: {exc}")
+        return
+
+    bills_df = pd.DataFrame(bills_data)
     if bills_df.empty:
         st.warning("No bills found for this account.")
         return
 
-    issues_df = fetch_user_bills_with_issues(account_id)
+    issues_df = pd.DataFrame(issues_data)
 
     # Extract anomalous bill IDs
     issue_bill_ids = set()

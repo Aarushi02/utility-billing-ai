@@ -1,84 +1,101 @@
-"""
-workflow_trigger.py
---------------------
-Streamlit component for running the Utility Billing AI workflow
-with live progress updates.
+"""Streamlit component for submitting and monitoring workflow jobs via API."""
 
-This version runs the local orchestrator (`workflow_manager.py`)
-and displays step-by-step results directly in the UI.
-"""
-
-import streamlit as st
 import time
-from datetime import datetime
 
-from src.orchestrator import workflow_manager
+import requests
+import streamlit as st
 
-# -------------------------------------------------------------------
-# Helper function to execute each agent with visible feedback
-# -------------------------------------------------------------------
-def _run_agent_with_status(agent_name, agent_func, progress_placeholder, logs):
-    start = datetime.now()
-    try:
-        progress_placeholder.info(f"{agent_name}: running...")
-        success = agent_func()
-        elapsed = (datetime.now() - start).total_seconds()
-        if success:
-            msg = f"{agent_name}: completed in {elapsed:.2f}s"
-            progress_placeholder.success(msg)
-            logs.append(msg)
-            return True
-        else:
-            msg = f"{agent_name}: finished with issues"
-            progress_placeholder.warning(msg)
-            logs.append(msg)
-            return False
-    except Exception as e:
-        msg = f"{agent_name}: failed ({e})"
-        progress_placeholder.error(msg)
-        logs.append(msg)
-        return False
+from src.utils.config import get_env
+
+
+API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
+
+
+def _get_api_json(path: str):
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.get(f"{API_BASE_URL}{path}", timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
+
+
+def _post_api_json(path: str, payload: dict):
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
 
 
 # -------------------------------------------------------------------
 # Public entry point
 # -------------------------------------------------------------------
 def render_workflow_trigger():
-    """Renders the Streamlit UI section to trigger the workflow."""
+    """Renders the Streamlit UI section to trigger and monitor workflow jobs."""
     st.title("Run Workflow")
-    st.caption("Execute the Utility Billing AI pipeline and monitor progress live.")
+    st.caption("Submit workflow as a background API job and monitor status.")
+
+    if "workflow_job_id" not in st.session_state:
+        st.session_state.workflow_job_id = None
 
     if st.button("Start Workflow"):
-        st.write("Starting pipeline...")
-        logs = []
-        progress_area = st.container()
-        start_time = datetime.now()
+        try:
+            job = _post_api_json("/api/v1/jobs", {"job_type": "full_workflow"})
+            st.session_state.workflow_job_id = job.get("job_id")
+            st.success(f"Workflow job submitted: {st.session_state.workflow_job_id}")
+        except requests.RequestException as exc:
+            st.error(f"Unable to submit workflow job: {exc}")
+            return
 
-        steps = [
-            ("Document Processor", workflow_manager.run_document_processor),
-            ("Tariff Analysis", workflow_manager.run_tariff_analysis),
-            ("Bill Comparison", workflow_manager.run_bill_comparison),
-            ("Error Detection", workflow_manager.run_error_detection),
-            ("Reporting", workflow_manager.run_reporting),
-        ]
+    job_id = st.session_state.workflow_job_id
+    if not job_id:
+        st.info("No active workflow job. Click 'Start Workflow' to submit one.")
+        return
 
-        for step_name, step_func in steps:
-            placeholder = progress_area.empty()
-            ok = _run_agent_with_status(step_name, step_func, placeholder, logs)
-            time.sleep(0.5)
-            if not ok:
-                st.error(f"Workflow stopped at {step_name}.")
-                break
+    try:
+        job = _get_api_json(f"/api/v1/jobs/{job_id}")
+    except requests.RequestException as exc:
+        st.error(f"Unable to fetch workflow status: {exc}")
+        return
 
-        end_time = datetime.now()
-        total = (end_time - start_time).total_seconds()
+    status = str(job.get("status", "unknown")).lower()
+    st.write(f"Job ID: {job_id}")
+    st.write(f"Status: {status}")
 
-        st.markdown("---")
-        st.subheader("Run Summary")
-        for line in logs:
-            st.write("- " + line)
+    if status in {"queued", "running"}:
+        st.info("Workflow is still running. Auto-refreshing...")
+        time.sleep(2)
+        st.rerun()
+        return
 
-        st.success(f"Workflow finished. Total runtime: {total:.2f}s")
+    if status == "completed":
+        st.success("Workflow completed successfully.")
+    else:
+        st.error(f"Workflow failed: {job.get('error') or 'Unknown error'}")
+
+    if st.button("Clear Job Status"):
+        st.session_state.workflow_job_id = None
+        st.rerun()
 
 
 if __name__ == "__main__":

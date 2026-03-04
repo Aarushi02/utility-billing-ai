@@ -1,121 +1,128 @@
 # Environment Configuration Guide
 
-## How to Configure Environment Variables
+## 1) Environment Files Strategy
 
-Your application now works with **both local development (.env) and Streamlit Cloud (Secrets)**.
+Use separate env files by runtime mode:
 
-### For Local Development
+- `.env.local` → local venv/manual runs
+- `.env.docker` → docker compose runs
+- `.env.prod` → production server or secret manager
 
-1. Create a `.env` file in the project root:
-   ```bash
-   cp .env.example .env
-   ```
+Example templates are available in project root:
 
-2. Fill in your actual values in `.env`:
-   ```env
-   DB_TYPE=postgres
-   DB_HOST=localhost
-   DB_PORT=5432
-   DB_USER=postgres
-   DB_PASSWORD=your-password
-   DB_NAME=utility_billing
-   
-   AWS_ACCESS_KEY_ID=your-access-key
-   AWS_SECRET_ACCESS_KEY=your-secret-key
-   AWS_BUCKET_NAME=utility-billing-data
-   AWS_REGION=us-east-1
-   
-   OPENAI_API_KEY=your-openai-key
-   OPENAI_MODEL=gpt-4o-mini
-   
-   AIRFLOW_API_URL=http://localhost:8080/api/v2
-   AIRFLOW_API_USER=airflow
-   AIRFLOW_API_PASSWORD=airflow
-   ```
+- `.env.local.example`
+- `.env.docker.example`
+- `.env.prod.example`
 
-3. Run locally:
-   ```bash
-   streamlit run app/streamlit_app.py
-   ```
+This split avoids accidental cross-mode hostnames (for example using `localhost` in Docker where service DNS should be `api`, `airflow`, `postgres`).
 
-### For Streamlit Cloud Deployment
+---
 
-1. Push your code to GitHub (without `.env` - it should be in `.gitignore`)
+## 2) Variable Resolution
 
-2. In **Streamlit Cloud Dashboard**:
-   - Navigate to your app settings (⚙️ gear icon)
-   - Click **"Secrets"**
-   - Paste into the Secrets editor in TOML format:
-   ```toml
-   DB_TYPE = "postgres"
-   DB_HOST = "your-host"
-   DB_PORT = 5432
-   DB_USER = "your-user"
-   DB_PASSWORD = "your-password"
-   DB_NAME = "your-db"
-   
-   AWS_ACCESS_KEY_ID = "your-key"
-   AWS_SECRET_ACCESS_KEY = "your-secret"
-   AWS_BUCKET_NAME = "utility-billing-data"
-   AWS_REGION = "us-east-1"
-   
-   OPENAI_API_KEY = "your-key"
-   OPENAI_MODEL = "gpt-4o-mini"
-   
-   AIRFLOW_API_URL = "http://localhost:8080/api/v2"
-   AIRFLOW_API_USER = "airflow"
-   AIRFLOW_API_PASSWORD = "airflow"
-   
-   ENV = "prod"
-   ```
+The app uses `get_env()` from `src/utils/config.py`.
 
-3. Click **"Save"** - changes take effect immediately
+Resolution order:
 
-## How It Works
+1. Streamlit Secrets (when available)
+2. OS environment variables
+3. `.env` values loaded by runtime
+4. default value in code
 
-The `get_env()` helper function (added to key modules):
-1. **First** checks Streamlit secrets (available on Cloud)
-2. **Falls back** to environment variables or `.env` (local dev)
-3. Returns a default if the key isn't found
+---
 
-This means:
-- ✅ Local development uses `.env`
-- ✅ Streamlit Cloud uses Secrets
-- ✅ No code changes needed - same code works everywhere
+## 3) Required Core Variables
 
-## Important Notes
+### Authentication
 
-- **Never commit `.env`** to GitHub - it's in `.gitignore`
-- **Secrets are encrypted** in Streamlit Cloud
-- The **`get_env()` function** is safe to use in any module
-- **AWS credentials** use `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (uppercase with underscores)
-- **Airflow variables** use standard naming: `AIRFLOW_API_URL`, `AIRFLOW_API_USER`, `AIRFLOW_API_PASSWORD`
-- **Database** connection requires both `DB_HOST` and `DB_USER` with proper credentials
-- Streamlit reloads automatically when secrets change (no redeployment needed)
+- `LOGIC_USERNAME`
+- `LOGIC_PASSWORD`
+- `SECRET_KEY`
 
-## Troubleshooting
+### Database
 
-**"Missing API_KEY or DATABASE_URL" error?**
-- Check that all required variables are in your secrets or `.env`
-- On Streamlit Cloud: verify secrets are properly saved in the dashboard
-- Locally: ensure `.env` file exists and is properly formatted
+- `DB_TYPE` (`postgres` or `sqlite`)
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
 
-**Can't access secrets?**
-- Ensure you're using the `get_env()` helper function
-- The function gracefully handles missing secrets and falls back to `os.environ`
-- Use correct variable names: `AWS_ACCESS_KEY_ID` (not `aws_access_key_id`)
+### API Routing
 
-**Database connection error?**
-- Verify `DB_HOST`, `DB_PORT`, `DB_USER`, `DB_PASSWORD`, and `DB_NAME` are correct
-- For AWS RDS, ensure security groups allow your IP address
-- Test connection: `psql -h {DB_HOST} -U {DB_USER} -d {DB_NAME}`
+- `API_BASE_URL` (used by Streamlit to call backend API)
 
-**Airflow API not responding?**
-- Ensure `AIRFLOW_API_URL` is correct (e.g., `http://localhost:8080/api/v2`)
-- Verify `AIRFLOW_API_USER` and `AIRFLOW_API_PASSWORD` are correct
-- Check Airflow service is running: `airflow webserver --port 8080`
+### Airflow Integration
 
-**OpenAI API key invalid?**
-- Verify `OPENAI_API_KEY` is from https://platform.openai.com/api-keys
-- Ensure key has not expired or been revoked
-- Check correct model name: `gpt-4o-mini` (not `gpt-4`)
+- `AIRFLOW_API_URL` (should include `/api/v2`)
+- `AIRFLOW_API_USER`
+- `AIRFLOW_API_PASSWORD`
+- `AIRFLOW_DAG_ID`
+
+### Optional External Services
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `AWS_ACCESS_KEY_ID`
+- `AWS_SECRET_ACCESS_KEY`
+- `AWS_BUCKET_NAME`
+- `AWS_REGION`
+
+---
+
+## 4) Runtime-Specific Examples
+
+### Local (venv)
+
+- `API_BASE_URL=http://127.0.0.1:8000`
+- `AIRFLOW_API_URL=http://127.0.0.1:8080/api/v2`
+- `DB_HOST=127.0.0.1` (or managed DB host)
+
+Start stack with helper script:
+
+```bash
+./run_local_stack.sh start
+```
+
+### Docker Compose
+
+- `API_BASE_URL=http://api:8000`
+- `AIRFLOW_API_URL=http://airflow:8080/api/v2`
+- `DB_HOST=postgres`
+
+Compose reads `.env.docker` via `env_file` in `docker-compose.yml`.
+
+### Production
+
+- `API_BASE_URL=https://api.yourdomain.com`
+- `AIRFLOW_API_URL=http://airflow.internal:8080/api/v2`
+- `DB_HOST=<managed-db-host>`
+
+---
+
+## 5) Security Rules
+
+- Do not commit real secrets.
+- Rotate exposed keys immediately.
+- Keep Airflow credentials only in backend/API runtime, not in frontend-only systems.
+- Prefer secret manager for production (`.env.prod` should be template-only in git).
+
+---
+
+## 6) Troubleshooting
+
+### `Read timed out` in Streamlit
+
+- Check backend health: `curl http://127.0.0.1:8000/api/v1/health/live`
+- Confirm `API_BASE_URL` matches running backend URL
+- Restart stack: `./run_local_stack.sh restart`
+
+### API starts but Airflow trigger returns `502`
+
+- Check `AIRFLOW_API_URL`
+- Confirm Airflow is reachable and credentials are valid
+
+### Swagger unavailable
+
+- Verify API process is live on port 8000
+- Open `http://127.0.0.1:8000/docs`

@@ -1,11 +1,33 @@
 import streamlit as st
-from src.database.utils.tariff_and_versions_utils import (
-    get_distinct_sc_codes,
-    get_versions_for_sc,
-    get_logic_for_sc_version,
-)
+import requests
+import time
+
+from src.utils.config import get_env
 
 st.set_page_config(page_title="Tariff Logic Viewer", page_icon="📑", layout="wide")
+
+
+API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_api_json(path: str):
+    url = f"{API_BASE_URL}{path}"
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.get(url, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise
+
+    if last_exc:
+        raise last_exc
 
 
 # ------------------------------------------
@@ -69,9 +91,14 @@ def render_tariff_details_viewer():
     st.title("📑 Utility Tariff Logic Viewer")
 
     # 1️⃣ LOAD SC CODES FROM DB
-    sc_codes = get_distinct_sc_codes()
+    try:
+        sc_codes = _get_api_json("/api/v1/tariffs/sc-codes").get("sc_codes", [])
+    except requests.RequestException as exc:
+        st.error(f"Unable to load SC codes from API: {exc}")
+        return
+
     if not sc_codes:
-        st.error("No SC codes available in the database.")
+        st.error("No SC codes available from API.")
         return
 
     # ----------------------------------
@@ -83,7 +110,12 @@ def render_tariff_details_viewer():
         selected_sc = st.selectbox("Service Classification (SC):", sc_codes)
 
     # 2️⃣ LOAD VERSIONS AFTER SC IS PICKED
-    versions = get_versions_for_sc(selected_sc)
+    try:
+        versions = _get_api_json(f"/api/v1/tariffs/{selected_sc}/versions").get("versions", [])
+    except requests.RequestException as exc:
+        st.error(f"Unable to load versions from API: {exc}")
+        return
+
     if not versions:
         st.warning("No versions found for this SC code.")
         return
@@ -97,9 +129,16 @@ def render_tariff_details_viewer():
     st.markdown("---")
 
     # 3️⃣ FETCH LOGIC JSON FROM DB
-    logic_json = get_logic_for_sc_version(selected_sc, selected_version)
+    try:
+        logic_json = _get_api_json(
+            f"/api/v1/tariffs/{selected_sc}/versions/{selected_version}"
+        ).get("logic")
+    except requests.RequestException as exc:
+        st.error(f"Unable to load tariff logic from API: {exc}")
+        return
+
     if not logic_json:
-        st.error("No logic found for this version in the database.")
+        st.error("No logic found for this version.")
         return
 
     # 4️⃣ DISPLAY HEADER INFO

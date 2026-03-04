@@ -1,30 +1,13 @@
-import os
-import re
-import json
-import tempfile
 from io import BytesIO
+import re
+import time
 
 import pandas as pd
+import requests
 import streamlit as st
-from sqlalchemy import text
 
-from src.utils.logger import get_logger
-from src.database.db_utils import get_engine
-from src.database.utils.user_bills_utils import fetch_user_bills
+from src.utils.config import get_env
 
-from src.agents.Variable_Updates.extra_charges import store_override_values
-
-
-try:
-    from src.agents.audit_calculation_agent.calc_engine_updated import AuditEngine
-except Exception:
-    AuditEngine = None
-
-logger = get_logger("AuditReportViewer")
-
-# =========================================================
-# CONSTANTS
-# =========================================================
 
 ALLOWED_SC_MAP = {
     "SC-1": "SC1",
@@ -35,17 +18,21 @@ ALLOWED_SC_MAP = {
     "SC-3A": "SC3A",
 }
 
-# =========================================================
-# SAFE HELPERS
-# =========================================================
+API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
 
-def _clean_columns(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    df.columns = [
-        re.sub(r"[^a-z0-9_]+", "_", str(c).lower()).strip("_")
-        for c in df.columns
-    ]
-    return df
+
+DISPLAY_COL_MAP = {
+    "bill_date": "Bill Date",
+    "service_class": "Service Class",
+    "kwh": "kWh",
+    "demand_kw": "Demand (kW)",
+    "actual_bill": "Actual Bill",
+    "tra": "TRA",
+    "rdm": "RDM",
+    "expected_bill": "Expected Bill",
+    "variance": "Variance",
+    "status": "Status",
+}
 
 
 def _safe_excel_sheet_name(name: str) -> str:
@@ -54,235 +41,83 @@ def _safe_excel_sheet_name(name: str) -> str:
 
 
 def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
-    buf = BytesIO()
-    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+    buffer = BytesIO()
+    with pd.ExcelWriter(buffer, engine="openpyxl") as writer:
         df.to_excel(writer, index=False, sheet_name=_safe_excel_sheet_name(sheet_name))
-    buf.seek(0)
-    return buf
+    buffer.seek(0)
+    return buffer
 
 
-# =========================================================
-# COLUMN RESOLUTION (NO ASSUMPTIONS)
-# =========================================================
+@st.cache_data(ttl=60, show_spinner=False)
+def _get_api_json(path: str, params: dict | None = None):
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            response = requests.get(f"{API_BASE_URL}{path}", params=params, timeout=30)
+            response.raise_for_status()
+            return response.json()
+        except requests.RequestException as exc:
+            last_exc = exc
+            if attempt < 2:
+                time.sleep(1 + attempt)
+                continue
+            raise
 
-def _resolve_service_class_column(df: pd.DataFrame) -> str | None:
-    for c in [
-        "service_class",
-        "rate_class",
-        "sc_code",
-        "serviceclassification",
-        "service_classification",
-    ]:
-        if c in df.columns:
-            return c
-    return None
-
-
-def _resolve_bill_columns(df: pd.DataFrame) -> dict | None:
-    def pick(candidates):
-        for c in candidates:
-            if c in df.columns:
-                return c
-        return None
-
-    bill_date = pick(["read_date", "bill_date", "date"])
-    kwh = pick(["billed_kwh", "kwh", "usage_kwh", "energy_kwh"])
-    demand = pick(["billed_demand", "demand_kw", "kw_demand"])
-    amount = pick(["bill_amount", "total_bill", "current_charges", "amount_due"])
-
-    if not all([bill_date, kwh, demand, amount]):
-        return None
-
-    return {
-        "bill_date": bill_date,
-        "billed_kwh": kwh,
-        "billed_demand": demand,
-        "bill_amount": amount,
-    }
+    if last_exc:
+        raise last_exc
 
 
-# =========================================================
-# GRID + TARIFF HELPERS
-# =========================================================
-
-def _build_override_grid(df: pd.DataFrame, cols: dict, sc_code: str) -> pd.DataFrame:
-    out = df[
-        [
-            cols["bill_date"],
-            cols["billed_kwh"],
-            cols["billed_demand"],
-            cols["bill_amount"],
-        ]
-    ].copy()
-
-    out["service_class"] = sc_code
-    out["override_tra"] = 0.0
-    out["override_rdm"] = 0.0
-    return out
+def _post_api_json(path: str, payload: dict):
+    response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=60)
+    response.raise_for_status()
+    return response.json()
 
 
-
-
-
-def _build_tariff_json_from_db(account_id: str, sc_code: str) -> str:
-    engine = get_engine()
-
-    with engine.begin() as conn:
-        rows = conn.execute(
-            text("""
-                SELECT logic_json
-                FROM tariff_logic_versions
-                WHERE sc_code = :sc
-                ORDER BY effective_date
-            """),
-            {"sc": sc_code},
-        ).mappings().all()
-
+def _result_to_display_df(rows: list[dict]) -> pd.DataFrame:
     if not rows:
-        raise RuntimeError(f"No tariff logic found for SC={sc_code}")
+        return pd.DataFrame()
+    result_df = pd.DataFrame(rows)
+    result_df = result_df.rename(columns=DISPLAY_COL_MAP)
+    return result_df
 
-    definitions = []
-
-    for r in rows:
-        raw = r["logic_json"]
-
-        if isinstance(raw, str):
-            obj = json.loads(raw)
-        elif isinstance(raw, dict):
-            obj = raw
-        else:
-            continue
-
-        obj.setdefault("metadata", {})
-        obj["metadata"].setdefault("sc_code", sc_code)
-        definitions.append(obj)
-
-    fd, path = tempfile.mkstemp(
-        prefix=f"tariff_{sc_code}_{account_id}_",
-        suffix=".json"
-    )
-
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(definitions, f, indent=2)
-
-    return path
-
-
-def _compute_expected(engine, grid_df, cols):
-    rows = []
-
-    for _, r in grid_df.iterrows():
-        ctx = {
-            "read_date": r[cols["bill_date"]],
-            "bill_date": r[cols["bill_date"]],
-            "billed_kwh": r[cols["billed_kwh"]],
-            "billed_demand": r[cols["billed_demand"]],
-            "bill_amount": r[cols["bill_amount"]],
-            "service_class": r["service_class"],
-            "override_tra": r["override_tra"],
-            "override_rdm": r["override_rdm"],
-        }
-
-        out = engine.calculate_expected_bill(pd.Series(ctx))
-
-        rows.append({
-            "Bill Date": ctx["bill_date"],
-            "Service Class": out.get("sc_code"),
-            "kWh": float(ctx["billed_kwh"]),
-            "Demand (kW)": float(ctx["billed_demand"]),
-            "Actual Bill": float(ctx["bill_amount"]),
-            "TRA": float(ctx["override_tra"]),
-            "RDM": float(ctx["override_rdm"]),
-            "Expected Bill": out.get("expected_bill", 0.0),
-            "Variance": out.get("variance", 0.0),
-            "Status": out.get("status"),
-        })
-
-    df = pd.DataFrame(rows)
-    df[["Expected Bill", "Actual Bill", "Variance"]] = df[
-        ["Expected Bill", "Actual Bill", "Variance"]
-    ].round(2)
-
-    return df
-
-
-# =========================================================
-# SAFE SESSION STATE UPDATE (CRITICAL FIX)
-# =========================================================
-
-def _safe_update_grid_state(grid_key: str, edited_df: pd.DataFrame):
-    prev_df = st.session_state.get(grid_key)
-
-    if prev_df is None:
-        st.session_state[grid_key] = edited_df
-        return
-
-    try:
-        if not edited_df.equals(prev_df):
-            st.session_state[grid_key] = edited_df
-            st.session_state.run_override_calc = False
-    except Exception:
-        st.session_state[grid_key] = edited_df
-        st.session_state.run_override_calc = False
-
-
-# =========================================================
-# MAIN VIEW
-# =========================================================
 
 def render_report_viewer():
-
-    # ---- SESSION STATE (MUST BE FIRST) ----
     st.session_state.setdefault("run_override_calc", False)
 
     st.title("Audit Report Viewer")
 
-    # ---- LOAD ALL BILLS ----
-    all_bills = fetch_user_bills(account_id=None)
-    if all_bills is None or all_bills.empty:
+    try:
+        accounts = _get_api_json("/api/v1/reports/accounts").get("accounts", [])
+    except requests.RequestException as exc:
+        st.error(f"Unable to load accounts from API: {exc}")
+        return
+
+    if not accounts:
         st.error("No billing data available.")
         return
 
-    all_bills = _clean_columns(all_bills)
-
-    if "bill_account" not in all_bills.columns:
-        st.error("Missing bill_account column.")
-        return
-
-    accounts = sorted(all_bills["bill_account"].dropna().unique())
     account = st.selectbox("Account Number", accounts)
-
-    # ---- SERVICE CLASS ----
     sc_label = st.selectbox("Service Classification", list(ALLOWED_SC_MAP.keys()))
     sc_code = ALLOWED_SC_MAP[sc_label]
 
-    # ---- BUILD TARIFF ----
-    tariff_path = _build_tariff_json_from_db(account, sc_code)
-
-    # ---- LOAD ACCOUNT BILLS ----
-    df = fetch_user_bills(account_id=account)
-    df = _clean_columns(df)
-
-    sc_col = _resolve_service_class_column(df)
-    if sc_col:
-        df = df[
-            df[sc_col]
-            .astype(str)
-            .str.upper()
-            .str.replace("-", "", regex=False)
-            == sc_code
-        ].copy()
-
-    cols = _resolve_bill_columns(df)
-    if not cols:
-        st.error("Required billing columns not found.")
-        return
-
     grid_key = f"override_grid_{account}_{sc_code}"
-    if grid_key not in st.session_state:
-        st.session_state[grid_key] = _build_override_grid(df, cols, sc_code)
 
-    # ---- DATA EDITOR ----
+    if grid_key not in st.session_state:
+        try:
+            rows = _get_api_json(
+                "/api/v1/reports/grid",
+                params={"account_id": account, "sc_code": sc_code},
+            ).get("rows", [])
+        except requests.RequestException as exc:
+            st.error(f"Unable to load override grid from API: {exc}")
+            return
+
+        if not rows:
+            st.error("Required billing columns not found.")
+            return
+
+        st.session_state[grid_key] = pd.DataFrame(rows)
+
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
     edited = st.data_editor(
@@ -298,30 +133,41 @@ def render_report_viewer():
             ),
         },
     )
-    #---- Storing OVERRIDE RATES ----
-    store_override_values(
-    st.session_state[grid_key],
-    bill_date_col=cols["bill_date"],
-)
-    _safe_update_grid_state(grid_key, edited)
+
+    if not edited.equals(st.session_state[grid_key]):
+        st.session_state[grid_key] = edited
+        st.session_state.run_override_calc = False
 
     st.caption("Tip: Press Enter or click outside the cell to commit a value.")
 
     if st.button("Calculate Expected Bill", type="primary"):
         st.session_state.run_override_calc = True
 
-   
-    # ---- CALCULATION ----
     if st.session_state.run_override_calc:
-        engine = AuditEngine(tariff_path)
-        result_df = _compute_expected(engine, st.session_state[grid_key], cols)
+        payload_rows = st.session_state[grid_key].to_dict(orient="records")
+
+        try:
+            result = _post_api_json(
+                "/api/v1/reports/calculate",
+                {
+                    "account_id": account,
+                    "sc_code": sc_code,
+                    "rows": payload_rows,
+                },
+            )
+        except requests.RequestException as exc:
+            st.error(f"Unable to calculate expected bill from API: {exc}")
+            return
+
+        result_rows = result.get("rows", [])
+        result_df = _result_to_display_df(result_rows)
 
         st.dataframe(result_df, use_container_width=True)
 
         c1, c2, c3 = st.columns(3)
-        c1.metric("Total Actual", f"${result_df['Actual Bill'].sum():,.2f}")
-        c2.metric("Total Expected", f"${result_df['Expected Bill'].sum():,.2f}")
-        c3.metric("Total Variance", f"${result_df['Variance'].sum():,.2f}")
+        c1.metric("Total Actual", f"${result.get('total_actual', 0.0):,.2f}")
+        c2.metric("Total Expected", f"${result.get('total_expected', 0.0):,.2f}")
+        c3.metric("Total Variance", f"${result.get('total_variance', 0.0):,.2f}")
 
         st.download_button(
             "Download Expected Bill (Excel)",
