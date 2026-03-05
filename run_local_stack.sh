@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -Eeuo pipefail
+IFS=$'\n\t'
+trap 'echo "❌ Failed at line $LINENO: $BASH_COMMAND" >&2' ERR
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_PY="$ROOT_DIR/venv/bin/python"
 PID_DIR="$ROOT_DIR/.pids"
 API_PID_FILE="$PID_DIR/api.pid"
 UI_PID_FILE="$PID_DIR/streamlit.pid"
@@ -14,24 +15,54 @@ UI_PORT="8501"
 
 mkdir -p "$PID_DIR" "$ROOT_DIR/logs"
 
+detect_venv_python() {
+  # Linux/macOS
+  if [[ -x "$ROOT_DIR/venv/bin/python" ]]; then
+    echo "$ROOT_DIR/venv/bin/python"
+    return 0
+  fi
+
+  # Windows (PowerShell-created venv)
+  if [[ -x "$ROOT_DIR/venv/Scripts/python.exe" ]]; then
+    echo "$ROOT_DIR/venv/Scripts/python.exe"
+    return 0
+  fi
+
+  # Sometimes Git Bash exposes a non-.exe shim
+  if [[ -x "$ROOT_DIR/venv/Scripts/python" ]]; then
+    echo "$ROOT_DIR/venv/Scripts/python"
+    return 0
+  fi
+
+  return 1
+}
+
+VENV_PY=""
 require_python() {
-  if [[ ! -x "$VENV_PY" ]]; then
-    echo "❌ Missing venv python at: $VENV_PY"
-    echo "Create it first: python3 -m venv venv && source venv/bin/activate && pip install -r requirements.txt"
+  if ! VENV_PY="$(detect_venv_python)"; then
+    echo "❌ Missing venv python."
+    echo "Expected one of:"
+    echo "  - $ROOT_DIR/venv/bin/python"
+    echo "  - $ROOT_DIR/venv/Scripts/python.exe"
+    echo ""
+    echo "Create it first:"
+    echo "  python -m venv venv"
+    echo "  (Windows)  .\\venv\\Scripts\\pip install -r requirements.txt"
+    echo "  (Linux/Mac) ./venv/bin/pip install -r requirements.txt"
     exit 1
   fi
 }
 
+have_cmd() { command -v "$1" >/dev/null 2>&1; }
+
 is_pid_running() {
   local pid="$1"
-  [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null
+  [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
 }
 
 read_pid() {
   local file="$1"
-  if [[ -f "$file" ]]; then
-    cat "$file"
-  fi
+  [[ -f "$file" ]] && cat "$file"
 }
 
 kill_from_pid_file() {
@@ -39,22 +70,39 @@ kill_from_pid_file() {
   local name="$2"
   local pid
   pid="$(read_pid "$file" || true)"
+
   if [[ -n "${pid:-}" ]] && is_pid_running "$pid"; then
-    kill "$pid" || true
+    kill "$pid" 2>/dev/null || true
     sleep 1
     if is_pid_running "$pid"; then
-      kill -9 "$pid" || true
+      kill -9 "$pid" 2>/dev/null || true
     fi
     echo "🛑 Stopped $name (PID $pid)"
   fi
+
   rm -f "$file"
+}
+
+api_is_healthy() {
+  local url="http://${API_HOST}:${API_PORT}/api/v1/health/live"
+
+  if have_cmd curl; then
+    curl -fsS --max-time 2 "$url" >/dev/null 2>&1
+    return $?
+  fi
+
+  # Fallback if curl isn't available: try python request
+  "$VENV_PY" - <<PY >/dev/null 2>&1 || return 1
+import urllib.request
+urllib.request.urlopen("${url}", timeout=2).read()
+PY
 }
 
 wait_for_api() {
   local attempts=30
   local url="http://${API_HOST}:${API_PORT}/api/v1/health/live"
   for ((i=1; i<=attempts; i++)); do
-    if curl -fsS --max-time 2 "$url" >/dev/null 2>&1; then
+    if api_is_healthy; then
       echo "✅ API is healthy: $url"
       return 0
     fi
@@ -65,7 +113,7 @@ wait_for_api() {
 }
 
 start_api() {
-  if curl -fsS --max-time 2 "http://${API_HOST}:${API_PORT}/api/v1/health/live" >/dev/null 2>&1; then
+  if api_is_healthy; then
     echo "ℹ️ API already reachable at http://${API_HOST}:${API_PORT}"
     return
   fi
@@ -75,38 +123,61 @@ start_api() {
   local pid=$!
   echo "$pid" > "$API_PID_FILE"
 
-  if ! wait_for_api; then
-    exit 1
-  fi
-
+  wait_for_api
   echo "🌐 Swagger: http://${API_HOST}:${API_PORT}/docs"
 }
 
 start_ui() {
   local existing_pid
   existing_pid="$(read_pid "$UI_PID_FILE" || true)"
+
   if [[ -n "${existing_pid:-}" ]] && is_pid_running "$existing_pid"; then
     echo "ℹ️ Streamlit already running on http://127.0.0.1:${UI_PORT} (PID $existing_pid)"
     return
   fi
 
   echo "▶️ Starting Streamlit on 127.0.0.1:${UI_PORT} ..."
-  nohup env API_BASE_URL="http://${API_HOST}:${API_PORT}" "$VENV_PY" -m streamlit run "$ROOT_DIR/app/streamlit_app.py" --server.address 127.0.0.1 --server.port "$UI_PORT" >"$UI_LOG" 2>&1 &
+  nohup env API_BASE_URL="http://${API_HOST}:${API_PORT}" \
+    "$VENV_PY" -m streamlit run "$ROOT_DIR/app/streamlit_app.py" \
+      --server.address 127.0.0.1 \
+      --server.port "$UI_PORT" >"$UI_LOG" 2>&1 &
   local pid=$!
   echo "$pid" > "$UI_PID_FILE"
   echo "🌐 Streamlit: http://127.0.0.1:${UI_PORT}"
 }
 
+ui_is_listening() {
+  # Prefer lsof if available
+  if have_cmd lsof; then
+    lsof -nP -iTCP:"$UI_PORT" -sTCP:LISTEN >/dev/null 2>&1
+    return $?
+  fi
+
+  # Fallback: try HTTP request to Streamlit root
+  if have_cmd curl; then
+    curl -fsS --max-time 2 "http://127.0.0.1:${UI_PORT}" >/dev/null 2>&1
+    return $?
+  fi
+
+  # Last fallback: python urllib
+  "$VENV_PY" - <<PY >/dev/null 2>&1 || return 1
+import urllib.request
+urllib.request.urlopen("http://127.0.0.1:${UI_PORT}", timeout=2).read()
+PY
+}
+
 print_status() {
-  echo "\n📌 Stack status"
-  if curl -fsS --max-time 2 "http://${API_HOST}:${API_PORT}/api/v1/health/live" >/dev/null 2>&1; then
+  echo ""
+  echo "📌 Stack status"
+
+  if api_is_healthy; then
     echo "- API: UP    (http://${API_HOST}:${API_PORT})"
     echo "- Docs:      http://${API_HOST}:${API_PORT}/docs"
   else
     echo "- API: DOWN"
   fi
 
-  if lsof -nP -iTCP:"$UI_PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+  if ui_is_listening; then
     echo "- UI:  UP    (http://127.0.0.1:${UI_PORT})"
   else
     echo "- UI:  DOWN"
@@ -116,28 +187,15 @@ print_status() {
   echo "- UI log:  $UI_LOG"
 }
 
-cmd_start() {
-  require_python
-  start_api
-  start_ui
-  print_status
-}
-
-cmd_stop() {
-  kill_from_pid_file "$UI_PID_FILE" "Streamlit"
-  kill_from_pid_file "$API_PID_FILE" "API"
-  echo "✅ Local stack stopped"
-}
-
-cmd_restart() {
-  cmd_stop
-  cmd_start
-}
+cmd_start() { require_python; start_api; start_ui; print_status; }
+cmd_stop()  { kill_from_pid_file "$UI_PID_FILE" "Streamlit"; kill_from_pid_file "$API_PID_FILE" "API"; echo "✅ Local stack stopped"; }
+cmd_restart(){ cmd_stop; cmd_start; }
 
 cmd_logs() {
   echo "== API log (tail) =="
   tail -n 40 "$API_LOG" 2>/dev/null || echo "No API log yet"
-  echo "\n== Streamlit log (tail) =="
+  echo ""
+  echo "== Streamlit log (tail) =="
   tail -n 40 "$UI_LOG" 2>/dev/null || echo "No Streamlit log yet"
 }
 
@@ -151,12 +209,6 @@ Commands:
   restart  Restart both services
   status   Show current status
   logs     Tail recent API/UI logs
-
-Examples:
-  ./run_local_stack.sh start
-  ./run_local_stack.sh status
-  ./run_local_stack.sh logs
-  ./run_local_stack.sh stop
 EOF
 }
 
@@ -164,7 +216,7 @@ case "${1:-}" in
   start) cmd_start ;;
   stop) cmd_stop ;;
   restart) cmd_restart ;;
-  status) print_status ;;
+  status) require_python; print_status ;;
   logs) cmd_logs ;;
-  *) usage ; exit 1 ;;
+  *) usage; exit 1 ;;
 esac
