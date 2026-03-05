@@ -69,6 +69,22 @@ class ReportService:
         if "bill_account" not in all_bills.columns:
             return []
         return sorted(all_bills["bill_account"].dropna().astype(str).unique().tolist())
+    
+    def fetch_override_values(self, sc_code: str, bill_dates: list):
+        query = """
+            SELECT bill_date, override_tra, override_rdm
+            FROM override_values
+            WHERE sc_code = :sc_code
+            AND bill_date IN :dates
+        """
+
+        with self.engine.begin() as conn:
+            rows = conn.execute(
+            text(query),
+            {"sc_code": sc_code, "dates": tuple(bill_dates)},
+        ).mappings().all()
+
+        return pd.DataFrame(rows)
 
     def load_override_grid(self, account_id: str, sc_code: str) -> list[dict]:
         df = fetch_user_bills(account_id=account_id)
@@ -99,8 +115,21 @@ class ReportService:
         )
         grid = grid.dropna(subset=["bill_date"]).copy()
         grid["service_class"] = sc_code
-        grid["override_tra"] = 0.0
-        grid["override_rdm"] = 0.0
+        bill_dates = grid["bill_date"].tolist()
+
+        override_df = self.fetch_override_values(sc_code, bill_dates)
+
+        if not override_df.empty:
+            override_df["bill_date"] = override_df["bill_date"].astype(str)
+
+            grid = grid.merge(
+                override_df,
+                on="bill_date",
+                how="left"
+            )
+
+        grid["override_tra"] = grid["override_tra"].fillna("")
+        grid["override_rdm"] = grid["override_rdm"].fillna("")
 
         return grid.to_dict(orient="records")
 
