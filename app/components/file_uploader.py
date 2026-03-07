@@ -6,10 +6,10 @@ import requests
 import time
 
 from src.utils.config import get_env
-from src.utils.aws_app import (
-    upload_fileobject_to_s3,
-    get_s3_key,
-)
+#from src.utils.aws_app import (
+#    upload_fileobject_to_s3,
+#    get_s3_key,
+#)
 
 
 API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
@@ -38,17 +38,17 @@ def _create_raw_document(metadata: dict) -> int | None:
     return body.get("id")
 
 
-def _run_bill_processing(s3_key: str, document_id: int | None = None) -> dict:
+def _run_bill_processing(document_id: int | None = None) -> dict:
     return _post_api_json(
         "/api/v1/processing/bills/run",
-        {"s3_key": s3_key, "document_id": document_id},
+        { "document_id": document_id},
     )
 
 
-def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None) -> dict:
+def _run_tariff_processing(raw_bill_document_id: int | None = None) -> dict:
     return _post_api_json(
         "/api/v1/processing/tariffs/run",
-        {"s3_key": s3_key, "raw_bill_document_id": raw_bill_document_id},
+        {"raw_bill_document_id": raw_bill_document_id},
     )
 
 
@@ -83,10 +83,10 @@ def render_file_uploader():
             file = bill_file
             
             # Upload to S3
-            s3_key = get_s3_key("raw", file.name)
-            if not upload_fileobject_to_s3(file, s3_key):
-                st.error(f"Failed to upload {file.name} to S3")
-                st.stop()
+            #s3_key = get_s3_key("raw", file.name)
+            #if not upload_fileobject_to_s3(file, s3_key):
+            #    st.error(f"Failed to upload {file.name} to S3")
+            #    st.stop()
             
             # Log upload in DB
             # metadata = {
@@ -162,7 +162,7 @@ def render_file_uploader():
                     """.format(file.name), unsafe_allow_html=True)
                 
                 # Process the file
-                result = _run_bill_processing(s3_key=s3_key, document_id=doc_id)
+                result = _run_bill_processing(document_id=doc_id)
                 total_anomalies = int(result.get("total_anomalies", 0))
                 df = pd.DataFrame(result.get("rows", []))
                 
@@ -286,9 +286,9 @@ def render_file_uploader():
             for file in tariff_files:
                 try:
                     # ---------- UPLOAD TO S3 ----------
-                    s3_key = get_s3_key("raw/tariff", file.name)
-                    if not upload_fileobject_to_s3(file, s3_key):
-                        raise Exception(f"Failed to upload {file.name} to S3")
+                    #s3_key = get_s3_key("raw/tariff", file.name)
+                    #if not upload_fileobject_to_s3(file, s3_key):
+                    #    raise Exception(f"Failed to upload {file.name} to S3")
                     
                     # ---------- LOG UPLOAD IN DB ----------
                     # metadata = {
@@ -360,7 +360,7 @@ def render_file_uploader():
                         """.format(file.name), unsafe_allow_html=True)
                     
                     # ---------- RUN PIPELINE ----------
-                    results = _run_tariff_processing(s3_key=s3_key, raw_bill_document_id=tariff_doc_id)
+                    results = _run_tariff_processing(raw_bill_document_id=tariff_doc_id)
                     
                     # Clear the processing overlay and re-enable page
                     processing_placeholder.empty()
