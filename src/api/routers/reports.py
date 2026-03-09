@@ -3,7 +3,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from src.services.report_service import ReportService
-from utils.variables_tariff_rates import insert_rdm_rate, insert_tra_rate
+from src.database.utils.variables_tariff_rates import insert_rdm_rate, insert_tra_rate
 
 
 class ReportAccountsResponse(BaseModel):

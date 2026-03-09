@@ -1,66 +1,58 @@
-# Deployment Runbook
+# Deployment Runbook (API + Streamlit)
 
-## What `.env.docker` means
+This runbook covers only two services:
 
-`.env.docker` is the environment file used by Docker services (`api`, `streamlit`, `airflow`).
+1. FastAPI backend (`api`) - internal service for Streamlit
+2. Streamlit frontend (`streamlit`) - internet-facing app
 
-It is separate from `.env` so that:
-- local venv runs can keep using local host values,
-- Docker runs can use container DNS names (`api`, `airflow`) while DB points to your managed PostgreSQL host,
-- production secrets can stay in `.env.prod` (or secret manager).
+Airflow is intentionally out of scope in this guide.
 
 ---
 
-## Quick Start (Docker, split services)
+## 1) Prerequisites
 
-### 1) Prepare env file
+- Docker Desktop (or Docker Engine + Compose plugin)
+- A valid `.env` file in project root (compose already reads `.env`)
+- Ports available on local machine:
+	- `8000` for API
+	- `8501` for Streamlit
 
-```bash
-cp .env.docker.example .env.docker
-# or edit existing .env.docker directly
-```
+---
 
-Required updates in `.env.docker`:
-- `DB_HOST`
-- `DB_PORT`
-- `DB_NAME`
-- `DB_USER`
-- `DB_PASSWORD`
-- `LOGIC_PASSWORD`
-- `SECRET_KEY`
-- `AIRFLOW_API_PASSWORD`
-- `AIRFLOW__WEBSERVER__SECRET_KEY`
-- `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN`
-- (optional) `OPENAI_API_KEY`, AWS keys
+## 2) Local Docker Test (First Step)
 
-### 2) Start all services
+### Start only API + Streamlit
 
 ```bash
-docker compose up --build -d
+docker compose up -d --build api streamlit
 ```
 
-### 3) Check service status
+### Check container health
 
 ```bash
 docker compose ps
 ```
 
-### 4) Verify live endpoints
+Expected:
+- `utility-api` is `Up ... (healthy)`
+- `utility-streamlit` is `Up`
 
-- API health: `http://127.0.0.1:8000/api/v1/health/live`
-- Swagger: `http://127.0.0.1:8000/docs`
-- Streamlit: `http://127.0.0.1:8501`
-- Airflow UI: `http://127.0.0.1:8080`
-
-### 5) Basic API tests
+### Verify endpoints
 
 ```bash
-curl http://127.0.0.1:8000/api/v1/health/live
-curl "http://127.0.0.1:8000/api/v1/runs?limit=5"
-curl http://127.0.0.1:8000/api/v1/bills/accounts
+curl -sS http://127.0.0.1:8000/api/v1/health/live
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501
 ```
 
-### 6) Stop
+Expected:
+- API returns `{"status":"ok"}`
+- Streamlit returns HTTP `200`
+
+### Open UI
+
+- http://127.0.0.1:8501
+
+### Stop services
 
 ```bash
 docker compose down
@@ -68,84 +60,78 @@ docker compose down
 
 ---
 
-## Local (without Docker)
+## 3) Production Topology (Target)
 
-### One-command local stack (recommended)
+Desired traffic flow:
+
+- User browser -> Streamlit (public)
+- Streamlit -> API (`http://api:8000` on Docker network)
+- API is not publicly reachable
+
+Implementation pattern on one EC2 host:
+
+- API binds to `127.0.0.1:8000`
+- Streamlit binds to `127.0.0.1:8501`
+- Caddy reverse proxy exposes only Streamlit on `443`
+
+---
+
+## 4) Environment Variables You Must Set
+
+Minimum required:
+
+- `LOGIC_USERNAME`
+- `LOGIC_PASSWORD`
+- `DB_TYPE` (`postgres` recommended in production)
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
+- `API_BASE_URL=http://api:8000`
+
+Optional but common:
+
+- `OPENAI_API_KEY`
+- `OPENAI_MODEL`
+- `AWS_BUCKET_NAME`
+- `AWS_REGION`
+- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (if not using IAM role)
+
+Notes:
+
+- Keep `.env` only on server. Never commit secrets.
+- If deploying on EC2 with instance IAM role, static AWS keys can be omitted.
+
+---
+
+## 5) Troubleshooting Quick Checks
+
+### API keeps restarting
 
 ```bash
-./run_local_stack.sh start
-./run_local_stack.sh status
-./run_local_stack.sh logs
-./run_local_stack.sh stop
+docker compose logs --tail=200 api
 ```
 
-This script starts API first, verifies health, then starts Streamlit and opens your browser.
+### Streamlit can’t fetch backend
 
-**On Windows**: Use Git Bash or WSL to run the bash script:
+1. Confirm API health endpoint responds.
+2. Confirm `API_BASE_URL=http://api:8000` in `.env`.
+3. Restart services:
+
 ```bash
-# Git Bash (right-click in folder -> "Git Bash Here")
-./run_local_stack.sh start
+docker compose up -d --build api streamlit
+```
 
-# Or Windows Terminal with Git Bash profile
-cd d:\utility-billing-ai
-./run_local_stack.sh start
+### Clean restart
+
+```bash
+docker compose down
+docker compose up -d --build api streamlit
 ```
 
 ---
 
-### Manual setup (if you prefer separate terminals)
+## 6) Related Docs
 
-#### API
-
-```bash
-source venv/bin/activate
-python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
-```
-
-#### Streamlit
-
-```bash
-source venv/bin/activate
-export API_BASE_URL=http://127.0.0.1:8000
-python -m streamlit run app/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
-```
-
-### Airflow trigger test through API
-
-```bash
-curl -X POST http://127.0.0.1:8000/api/v1/airflow/dag-runs
-```
-
----
-
-## Production split deployment strategy
-
-Deploy three services independently:
-
-1. **Backend API** (`uvicorn src.api.main:app`)  
-2. **Frontend Streamlit** (`streamlit run app/streamlit_app.py`)  
-3. **Airflow** (webserver/scheduler + metadata DB)
-
-Recommended traffic flow:
-- Browser -> Streamlit
-- Streamlit -> API (`API_BASE_URL=https://api.yourdomain.com`)
-- API -> Airflow (`AIRFLOW_API_URL=http://airflow.internal:8080/api/v2`)
-
-Why this is good:
-- independent scaling/restarts,
-- no direct Airflow credentials in frontend,
-- safer network boundaries (Airflow can remain private).
-
----
-
-## Notes
-
-- `{"detail":"Not Found"}` on `/` is normal; use `/docs` or `/api/v1/...`.
-- If API starts but airflow trigger returns `502`, check `AIRFLOW_API_URL` and Airflow service availability.
-- If Streamlit pages fail, confirm API is running and `API_BASE_URL` is correct.
-
-## Developer Extension
-
-For adding new logic, new API endpoints, and new Streamlit pages, use:
-
-- `documentation/DEVELOPER_EXTENSION_GUIDE.md`
+- `documentation/DEPLOYMENT.md` - single local + AWS deployment guide

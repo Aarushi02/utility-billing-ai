@@ -31,8 +31,9 @@ def get_env(key: str, default=None):
     return os.getenv(key, default)
 
 # AWS Configuration
-AWS_ACCESS_KEY_ID = get_env("aws_access_key_id")
-AWS_SECRET_ACCESS_KEY = get_env("Secret_access_key")
+# Support both legacy variable names and standard AWS names.
+AWS_ACCESS_KEY_ID = get_env("AWS_ACCESS_KEY_ID") or get_env("aws_access_key_id")
+AWS_SECRET_ACCESS_KEY = get_env("AWS_SECRET_ACCESS_KEY") or get_env("Secret_access_key")
 BUCKET_NAME = get_env("AWS_BUCKET_NAME", "utility-billing-data")
 AWS_REGION = get_env("AWS_REGION", "us-east-1").strip()
 
@@ -42,23 +43,21 @@ if " " in AWS_REGION:
 
 logger.info(f"AWS Configuration: region={AWS_REGION}, bucket={BUCKET_NAME}")
 
-# Verify credentials are set
-if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
-    logger.error("AWS credentials not found in environment variables")
+# Initialize S3 client. If explicit keys are missing, boto3 will try IAM role
+# credentials from the runtime environment (recommended on EC2/ECS).
+try:
+    client_kwargs = {"region_name": AWS_REGION}
+    if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
+        client_kwargs["aws_access_key_id"] = AWS_ACCESS_KEY_ID
+        client_kwargs["aws_secret_access_key"] = AWS_SECRET_ACCESS_KEY
+    else:
+        logger.info("AWS static keys not set; falling back to default AWS credential chain")
+
+    s3_client = boto3.client("s3", **client_kwargs)
+    logger.info(f"S3 client initialized successfully with region: {AWS_REGION}")
+except Exception as e:
+    logger.error(f"Failed to initialize S3 client: {e}")
     s3_client = None
-else:
-    # Initialize S3 client
-    try:
-        s3_client = boto3.client(
-            's3',
-            aws_access_key_id=AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-            region_name=AWS_REGION
-        )
-        logger.info(f"S3 client initialized successfully with region: {AWS_REGION}")
-    except Exception as e:
-        logger.error(f"Failed to initialize S3 client: {e}")
-        s3_client = None
 
 
 # ==================== UPLOAD FUNCTIONS ====================

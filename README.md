@@ -175,9 +175,9 @@ utility-billing-ai/
 ├── 📄 RUNBOOK_DEPLOYMENT.md               # Local/deployment runbook
 ├── 📦 requirements.txt                    # Python dependencies
 ├── 🐋 docker-compose.yml                  # Container orchestration
-├── 🔧 .env.local.example                  # Local environment template
-├── 🔧 .env.docker.example                 # Docker environment template
-├── 🔧 .env.prod.example                   # Production environment template
+├── 🐋 docker-compose.prod.yml             # Production port-binding override
+├── 🔧 .env                                # Runtime environment values (local/server)
+├── 🔧 .env.example                        # Sanitized environment template
 ├── 🔒 LICENSE                             # Project license
 │
 ├── 🌐 app/                                # Streamlit Frontend
@@ -255,9 +255,8 @@ utility-billing-ai/
 │   └── output/                            # Generated outputs
 │
 ├── 📚 documentation/                      # Project architecture and guides
-│   ├── API_ARCHITECTURE_DECISION.md
-│   ├── DEVELOPER_EXTENSION_GUIDE.md
-│   ├── ENVIRONMENT_CONFIG.md
+│   ├── ARCHITECTURE.md
+│   ├── DEPLOYMENT.md
 │   └── PROJECT_OVERVIEW.md
 │
 └── ▶️ run_local_stack.sh                  # Local API + Streamlit launcher
@@ -291,7 +290,7 @@ USER VIEWS RESULTS (Audit Bills Page)
 GENERATE REPORT (PDF/CSV export)
 ```
 
-See [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) for detailed workflow examples.
+See [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) for detailed workflow examples.
 
 ---
 
@@ -352,7 +351,9 @@ streamlit run app/streamlit_app.py
 
 ## 📚 Documentation
 
-- **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** - Complete technical documentation
+- **[documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md)** - Project purpose and scope
+- **[documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md)** - System architecture and component design
+- **[documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md)** - Local and AWS deployment guide
 - **[Airflow Documentation](https://airflow.apache.org/)**
 - **[Streamlit Docs](https://docs.streamlit.io/)**
 - **[OpenAI API](https://platform.openai.com/docs)**
