@@ -8,7 +8,7 @@ services:
     container_name: utility-api
     restart: unless-stopped
     env_file:
-      - .env.docker
+      - .env
     environment:
       AIRFLOW_API_URL: ${AIRFLOW_API_URL:-http://airflow:8080/api/v2}
       API_BASE_URL: http://api:8000
@@ -27,7 +27,7 @@ services:
     container_name: utility-streamlit
     restart: unless-stopped
     env_file:
-      - .env.docker
+      - .env
     environment:
       API_BASE_URL: http://api:8000
     depends_on:
@@ -41,7 +41,7 @@ services:
     container_name: utility-airflow
     restart: unless-stopped
     env_file:
-      - .env.docker
+      - .env
     user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
