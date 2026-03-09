@@ -1,26 +1,6 @@
 version: "3.9"
 
 services:
-  postgres:
-    image: postgres:14
-    container_name: utility-postgres
-    restart: unless-stopped
-    env_file:
-      - .env.docker
-    environment:
-      POSTGRES_USER: ${POSTGRES_USER:-postgres}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
-      POSTGRES_DB: ${POSTGRES_DB:-utility_billing_db}
-    ports:
-      - "5432:5432"
-    volumes:
-      - ./data/db:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
   api:
     build:
       context: .
@@ -30,17 +10,8 @@ services:
     env_file:
       - .env.docker
     environment:
-      DB_TYPE: postgres
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-utility_billing_db}
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       AIRFLOW_API_URL: ${AIRFLOW_API_URL:-http://airflow:8080/api/v2}
       API_BASE_URL: http://api:8000
-    depends_on:
-      postgres:
-        condition: service_healthy
     ports:
       - "8000:8000"
     healthcheck:
@@ -59,12 +30,6 @@ services:
       - .env.docker
     environment:
       API_BASE_URL: http://api:8000
-      DB_TYPE: postgres
-      DB_HOST: postgres
-      DB_PORT: 5432
-      DB_NAME: ${POSTGRES_DB:-utility_billing_db}
-      DB_USER: ${POSTGRES_USER:-postgres}
-      DB_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
     depends_on:
       api:
         condition: service_healthy
@@ -80,13 +45,9 @@ services:
     user: "${AIRFLOW_UID:-50000}:${AIRFLOW_GID:-0}"
     environment:
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-utility_billing_db}
       AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW__WEBSERVER__SECRET_KEY:-airflow-secret}
       _AIRFLOW_WWW_USER_USERNAME: ${AIRFLOW_API_USER:-admin}
       _AIRFLOW_WWW_USER_PASSWORD: ${AIRFLOW_API_PASSWORD:-admin}
-    depends_on:
-      postgres:
-        condition: service_healthy
     command: bash -c "airflow db migrate && airflow standalone"
     ports:
       - "8080:8080"

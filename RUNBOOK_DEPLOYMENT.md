@@ -2,11 +2,11 @@
 
 ## What `.env.docker` means
 
-`.env.docker` is the environment file used by Docker services (`api`, `streamlit`, `airflow`, `postgres`).
+`.env.docker` is the environment file used by Docker services (`api`, `streamlit`, `airflow`).
 
 It is separate from `.env` so that:
 - local venv runs can keep using local host values,
-- Docker runs can use container DNS names (`api`, `airflow`, `postgres`),
+- Docker runs can use container DNS names (`api`, `airflow`) while DB points to your managed PostgreSQL host,
 - production secrets can stay in `.env.prod` (or secret manager).
 
 ---
@@ -21,11 +21,16 @@ cp .env.docker.example .env.docker
 ```
 
 Required updates in `.env.docker`:
-- `POSTGRES_PASSWORD`
+- `DB_HOST`
+- `DB_PORT`
+- `DB_NAME`
+- `DB_USER`
+- `DB_PASSWORD`
 - `LOGIC_PASSWORD`
 - `SECRET_KEY`
 - `AIRFLOW_API_PASSWORD`
 - `AIRFLOW__WEBSERVER__SECRET_KEY`
+- `AIRFLOW__DATABASE__SQL_ALCHEMY_CONN`
 - (optional) `OPENAI_API_KEY`, AWS keys
 
 ### 2) Start all services

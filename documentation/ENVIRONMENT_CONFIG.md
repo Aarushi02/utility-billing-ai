@@ -14,7 +14,7 @@ Example templates are available in project root:
 - `.env.docker.example`
 - `.env.prod.example`
 
-This split avoids accidental cross-mode hostnames (for example using `localhost` in Docker where service DNS should be `api`, `airflow`, `postgres`).
+This split avoids accidental cross-mode hostnames (for example using `localhost` in Docker where service DNS should be `api` and `airflow`, while DB points to your managed PostgreSQL host).
 
 ---
 
@@ -88,7 +88,7 @@ Start stack with helper script:
 
 - `API_BASE_URL=http://api:8000`
 - `AIRFLOW_API_URL=http://airflow:8080/api/v2`
-- `DB_HOST=postgres`
+- `DB_HOST=<managed-db-host>`
 
 Compose reads `.env.docker` via `env_file` in `docker-compose.yml`.
 
