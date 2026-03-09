@@ -6,10 +6,12 @@ import requests
 import time
 
 from src.utils.config import get_env
-#from src.utils.aws_app import (
-#    upload_fileobject_to_s3,
-#    get_s3_key,
-#)
+
+from src.utils.aws_app import (
+    upload_fileobject_to_s3,
+    get_s3_key,
+
+)
 
 
 API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
@@ -38,17 +40,17 @@ def _create_raw_document(metadata: dict) -> int | None:
     return body.get("id")
 
 
-def _run_bill_processing(document_id: int | None = None) -> dict:
+def _run_bill_processing(s3_key: str, document_id: int | None = None) -> dict:
     return _post_api_json(
         "/api/v1/processing/bills/run",
-        { "document_id": document_id},
+        {"s3_key": s3_key, "document_id": document_id},
     )
 
 
-def _run_tariff_processing(raw_bill_document_id: int | None = None) -> dict:
+def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None) -> dict:
     return _post_api_json(
         "/api/v1/processing/tariffs/run",
-        {"raw_bill_document_id": raw_bill_document_id},
+        {"s3_key": s3_key, "raw_bill_document_id": raw_bill_document_id},
     )
 
 
@@ -68,10 +70,10 @@ def render_file_uploader():
     # ====================================
     with tab1:
         st.subheader("📄 Bill Documents Management")
-        
+
         st.markdown("### 📤 Upload New Bill")
         st.caption("Upload your utility bill (PDF only)")
-        
+
         bill_file = st.file_uploader(
             "Choose a PDF bill file",
             type=["pdf"],
@@ -81,13 +83,21 @@ def render_file_uploader():
 
         if bill_file:
             file = bill_file
-            
+
             # Upload to S3
-            #s3_key = get_s3_key("raw", file.name)
-            #if not upload_fileobject_to_s3(file, s3_key):
-            #    st.error(f"Failed to upload {file.name} to S3")
-            #    st.stop()
-            
+            s3_key = get_s3_key("raw", file.name)
+            if not upload_fileobject_to_s3(file, s3_key):
+                st.error(f"Failed to upload {file.name} to S3")
+                st.stop()
+
+
+
+
+
+
+
+
+
             # Log upload in DB
             # metadata = {
             #     "file_name": file.name,
@@ -97,14 +107,14 @@ def render_file_uploader():
             #     "status": "uploaded",
             #     "s3_key": s3_key
             # }
-            
+
             metadata = {
                 "file_name": file.name,
                 "file_type": Path(file.name).suffix.lower(),
                 "upload_date": datetime.utcnow().isoformat(),
                 "source": "User Upload (Bill)",
                 "status": "uploaded",
-                
+
             }
 
             try:
@@ -132,9 +142,9 @@ def render_file_uploader():
                     }
                     </style>
                 """, unsafe_allow_html=True)
-                
+
                 processing_placeholder = st.empty()
-                
+
                 with processing_placeholder.container():
                     st.markdown("""
                         <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
@@ -160,12 +170,17 @@ def render_file_uploader():
                         }}
                         </style>
                     """.format(file.name), unsafe_allow_html=True)
-                
+
                 # Process the file
-                result = _run_bill_processing(document_id=doc_id)
+                result = _run_bill_processing(s3_key=s3_key, document_id=doc_id)
                 total_anomalies = int(result.get("total_anomalies", 0))
                 df = pd.DataFrame(result.get("rows", []))
-                
+
+
+
+
+
+
                 # Clear the processing overlay and re-enable page
                 processing_placeholder.empty()
                 st.markdown("""
@@ -185,14 +200,14 @@ def render_file_uploader():
 
                 # Display results in a clean card layout
                 st.markdown(f"### 📄 {file.name}")
-                
+
                 # Anomalies metric with tip on the right
                 col1, col2 = st.columns([1, 3])
                 with col1:
                     st.metric(label="Anomalies detected", value=int(total_anomalies))
                 with col2:
                     st.info("💡 Tip: check Audit Bills section to get better insights.")
-                
+
                 # Data table with index starting from 1
                 df_display = df.copy()
                 df_display.index = df_display.index + 1
@@ -223,7 +238,7 @@ def render_file_uploader():
             with col2:
                 st.info("💡 Tip: check Audit Bills section to get better insights.")
             st.dataframe(res["dataframe"], use_container_width=True)
-            
+
             # Highlight the "Upload another bill" button with a more prominent color
             st.markdown(
                 """
@@ -286,10 +301,17 @@ def render_file_uploader():
             for file in tariff_files:
                 try:
                     # ---------- UPLOAD TO S3 ----------
-                    #s3_key = get_s3_key("raw/tariff", file.name)
-                    #if not upload_fileobject_to_s3(file, s3_key):
-                    #    raise Exception(f"Failed to upload {file.name} to S3")
-                    
+                    s3_key = get_s3_key("raw/tariff", file.name)
+                    if not upload_fileobject_to_s3(file, s3_key):
+                        raise Exception(f"Failed to upload {file.name} to S3")
+
+
+
+
+
+
+
+
                     # ---------- LOG UPLOAD IN DB ----------
                     # metadata = {
                     #     "file_name": file.name,
@@ -306,7 +328,7 @@ def render_file_uploader():
                         "upload_date": datetime.now().isoformat(),
                         "source": "User Upload (Tariff)",
                         "status": "uploaded",
-                       
+
                     }
                     try:
                         tariff_doc_id = _create_raw_document(metadata)
@@ -330,9 +352,9 @@ def render_file_uploader():
                         }
                         </style>
                     """, unsafe_allow_html=True)
-                    
+
                     processing_placeholder = st.empty()
-                    
+
                     with processing_placeholder.container():
                         st.markdown("""
                             <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
@@ -358,10 +380,18 @@ def render_file_uploader():
                             }}
                             </style>
                         """.format(file.name), unsafe_allow_html=True)
-                    
+
                     # ---------- RUN PIPELINE ----------
-                    results = _run_tariff_processing(raw_bill_document_id=tariff_doc_id)
-                    
+                    results = _run_tariff_processing(s3_key=s3_key, raw_bill_document_id=tariff_doc_id)
+
+
+
+
+
+
+
+
+
                     # Clear the processing overlay and re-enable page
                     processing_placeholder.empty()
                     st.markdown("""
