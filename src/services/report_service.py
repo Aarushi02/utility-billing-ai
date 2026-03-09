@@ -4,12 +4,13 @@ import re
 import tempfile
 
 import pandas as pd
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from src.agents.Variable_Updates.extra_charges import store_override_values
 from src.agents.audit_calculation_agent.calc_engine_updated import AuditEngine
 from src.database.db_utils import get_engine
 from src.database.utils.user_bills_utils import fetch_user_bills
+from src.database.utils.variables_tariff_rates import fetch_rates_for_dates
 
 
 class ReportService:
@@ -62,7 +63,7 @@ class ReportService:
         }
 
     def list_accounts(self) -> list[str]:
-        all_bills = fetch_user_bills(account_id=None)
+        all_bills = fetch_user_bills()
         if all_bills is None or all_bills.empty:
             return []
         all_bills = self._clean_columns(all_bills)
@@ -71,26 +72,31 @@ class ReportService:
         return sorted(all_bills["bill_account"].dropna().astype(str).unique().tolist())
     
     def fetch_override_values(self, sc_code: str, bill_dates: list):
-        query = """
-            SELECT bill_date, override_tra, override_rdm
+        if not bill_dates:
+            return pd.DataFrame()
+
+        query = text("""
+            SELECT bill_date, override_tra, override_rdm, override_sbc, override_ram
             FROM override_values
             WHERE sc_code = :sc_code
             AND bill_date IN :dates
-        """
+        """).bindparams(bindparam("dates", expanding=True))
 
         with self.engine.begin() as conn:
             rows = conn.execute(
-            text(query),
-            {"sc_code": sc_code, "dates": tuple(bill_dates)},
-        ).mappings().all()
+            query,
+            {"sc_code": sc_code, "dates": bill_dates},
+            ).mappings().all()
 
         return pd.DataFrame(rows)
 
-    def load_override_grid(self, account_id: str, sc_code: str) -> list[dict]:
-        df = fetch_user_bills(account_id=account_id)
+    def load_override_grid(self, sc_code: str) -> list[dict]:
+
+        df = fetch_user_bills()   # no account filter
         df = self._clean_columns(df)
 
         sc_column = self._resolve_service_class_column(df)
+
         if sc_column:
             normalized_target = str(sc_code).upper().replace("-", "")
             df = df[
@@ -105,33 +111,63 @@ class ReportService:
         if not cols:
             return []
 
-        grid = pd.DataFrame(
-            {
-                "bill_date": pd.to_datetime(df[cols["bill_date"]], errors="coerce").dt.strftime("%Y-%m-%d"),
-                "billed_kwh": pd.to_numeric(df[cols["billed_kwh"]], errors="coerce").fillna(0.0),
-                "billed_demand": pd.to_numeric(df[cols["billed_demand"]], errors="coerce").fillna(0.0),
-                "bill_amount": pd.to_numeric(df[cols["bill_amount"]], errors="coerce").fillna(0.0),
-            }
-        )
+        grid = pd.DataFrame({
+            "bill_date": pd.to_datetime(
+                df[cols["bill_date"]], errors="coerce"
+            ).dt.strftime("%Y-%m-%d"),
+
+            "billed_kwh": pd.to_numeric(
+                df[cols["billed_kwh"]], errors="coerce"
+            ).fillna(0.0),
+
+            "billed_demand": pd.to_numeric(
+                df[cols["billed_demand"]], errors="coerce"
+            ).fillna(0.0),
+
+            "bill_amount": pd.to_numeric(
+                df[cols["bill_amount"]], errors="coerce"
+            ).fillna(0.0),
+        })
+
         grid = grid.dropna(subset=["bill_date"]).copy()
         grid["service_class"] = sc_code
+
         bill_dates = grid["bill_date"].tolist()
 
-        override_df = self.fetch_override_values(sc_code, bill_dates)
+        # fetch stored tariff overrides
+        tra_rows = fetch_rates_for_dates("tra", sc_code, bill_dates)
+        rdm_rows = fetch_rates_for_dates("rdm", sc_code, bill_dates)
+        sbc_rows = fetch_rates_for_dates("sbc", sc_code, bill_dates)
+        ram_rows = fetch_rates_for_dates("ram", sc_code, bill_dates)
 
-        if not override_df.empty:
-            override_df["bill_date"] = override_df["bill_date"].astype(str)
+        tra_df = pd.DataFrame(tra_rows)
+        rdm_df = pd.DataFrame(rdm_rows)
+        sbc_df = pd.DataFrame(sbc_rows)
+        ram_df = pd.DataFrame(ram_rows)
 
-            grid = grid.merge(
-                override_df,
-                on="bill_date",
-                how="left"
-            )
+        if not tra_df.empty:
+            tra_df = tra_df.rename(columns={"effective_date": "bill_date", "rate": "override_tra"})
 
-        grid["override_tra"] = grid["override_tra"].fillna("")
-        grid["override_rdm"] = grid["override_rdm"].fillna("")
+        if not rdm_df.empty:
+            rdm_df = rdm_df.rename(columns={"effective_date": "bill_date", "rate": "override_rdm"})
 
-        return grid.to_dict(orient="records")
+        if not sbc_df.empty:
+            sbc_df = sbc_df.rename(columns={"effective_date": "bill_date", "rate": "override_sbc"})
+
+        if not ram_df.empty:
+            ram_df = ram_df.rename(columns={"effective_date": "bill_date", "rate": "override_ram"})
+
+        for rate_df in [tra_df, rdm_df, sbc_df, ram_df]:
+            if not rate_df.empty:
+                grid = grid.merge(rate_df, on="bill_date", how="left")
+
+        for col in ["override_tra", "override_rdm", "override_sbc", "override_ram"]:
+            if col not in grid.columns:
+                grid[col] = None
+            else:
+                grid[col] = pd.to_numeric(grid[col], errors="coerce")
+
+        return grid.to_dict("records")
 
     def calculate_expected_bill(self, account_id: str, sc_code: str, rows: list[dict]) -> dict:
         grid_df = pd.DataFrame(rows)

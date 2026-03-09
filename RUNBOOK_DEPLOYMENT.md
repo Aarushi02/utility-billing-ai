@@ -70,8 +70,6 @@ docker compose down
 
 ## Local (without Docker)
 
-Run in separate terminals.
-
 ### One-command local stack (recommended)
 
 ```bash
@@ -81,20 +79,35 @@ Run in separate terminals.
 ./run_local_stack.sh stop
 ```
 
-This script starts API first, verifies health, then starts Streamlit.
+This script starts API first, verifies health, then starts Streamlit and opens your browser.
 
-### API
-
+**On Windows**: Use Git Bash or WSL to run the bash script:
 ```bash
-source venv/bin/activate
-venv/bin/python -m uvicorn src.api.main:app --host 0.0.0.0 --port 8000
+# Git Bash (right-click in folder -> "Git Bash Here")
+./run_local_stack.sh start
+
+# Or Windows Terminal with Git Bash profile
+cd d:\utility-billing-ai
+./run_local_stack.sh start
 ```
 
-### Streamlit
+---
+
+### Manual setup (if you prefer separate terminals)
+
+#### API
 
 ```bash
 source venv/bin/activate
-API_BASE_URL=http://127.0.0.1:8000 venv/bin/python -m streamlit run app/streamlit_app.py --server.port 8501
+python -m uvicorn src.api.main:app --host 127.0.0.1 --port 8000
+```
+
+#### Streamlit
+
+```bash
+source venv/bin/activate
+export API_BASE_URL=http://127.0.0.1:8000
+python -m streamlit run app/streamlit_app.py --server.address 127.0.0.1 --server.port 8501
 ```
 
 ### Airflow trigger test through API

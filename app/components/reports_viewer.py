@@ -6,6 +6,7 @@ import pandas as pd
 import requests
 import streamlit as st
 
+from src.agents.Variable_Updates.extra_charges import store_override_values
 from src.utils.config import get_env
 
 
@@ -136,6 +137,8 @@ def render_report_viewer():
 
     if not edited.equals(st.session_state[grid_key]):
         st.session_state[grid_key] = edited
+        # Save overrides immediately to database
+        store_override_values(edited, bill_date_col="bill_date")
         st.session_state.run_override_calc = False
 
     st.caption("Tip: Press Enter or click outside the cell to commit a value.")

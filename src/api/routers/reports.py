@@ -3,6 +3,7 @@ from typing import Literal
 from pydantic import BaseModel
 
 from src.services.report_service import ReportService
+from utils.variables_tariff_rates import insert_rdm_rate, insert_tra_rate
 
 
 class ReportAccountsResponse(BaseModel):
@@ -15,8 +16,8 @@ class OverrideGridRow(BaseModel):
     billed_demand: float
     bill_amount: float
     service_class: str
-    override_tra: float = 0.0
-    override_rdm: float = 0.0
+    override_tra: float | None = None
+    override_rdm: float | None = None
 
 
 class OverrideGridResponse(BaseModel):
@@ -61,15 +62,41 @@ def get_report_accounts() -> ReportAccountsResponse:
 
 @router.get("/grid", response_model=OverrideGridResponse)
 def get_override_grid(account_id: str, sc_code: str) -> OverrideGridResponse:
-    rows = service.load_override_grid(account_id=account_id, sc_code=sc_code)
-    return OverrideGridResponse(account_id=account_id, sc_code=sc_code, rows=rows)
+
+    rows = service.load_override_grid(sc_code=sc_code)
+
+    return OverrideGridResponse(
+        account_id=account_id,
+        sc_code=sc_code,
+        rows=rows
+    )
 
 
 @router.post("/calculate", response_model=ReportsCalculateResponse)
 def calculate_report(payload: ReportsCalculateRequest) -> ReportsCalculateResponse:
+
+    # 1️⃣ Save user overrides to database
+    for row in payload.rows:
+
+        if row.override_tra is not None:
+            insert_tra_rate({
+                "effective_date": row.bill_date,
+                "sc_code": payload.sc_code,
+                "rate": row.override_tra
+            })
+
+        if row.override_rdm is not None:
+            insert_rdm_rate({
+                "effective_date": row.bill_date,
+                "sc_code": payload.sc_code,
+                "rate": row.override_rdm
+            })
+
+    # 2️⃣ Run calculation using the same user rows
     result = service.calculate_expected_bill(
         account_id=payload.account_id,
         sc_code=payload.sc_code,
         rows=[row.model_dump() for row in payload.rows],
     )
+
     return ReportsCalculateResponse(**result)
