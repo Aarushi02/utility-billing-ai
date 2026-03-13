@@ -255,9 +255,12 @@ utility-billing-ai/
 │   └── output/                            # Generated outputs
 │
 ├── 📚 documentation/                      # Project architecture and guides
-│   ├── ARCHITECTURE.md
-│   ├── DEPLOYMENT.md
-│   └── PROJECT_OVERVIEW.md
+│   ├── ARCHITECTURE.md                    # System architecture design
+│   ├── DEPLOYMENT.md                      # Local deployment guide
+│   ├── PROJECT_OVERVIEW.md                # Project scope and goals
+│   ├── AWS_REUSE_SETUP_RUNBOOK.md         # Primary cloud setup runbook
+│   ├── TERRAFORM_INFRA_GUIDE.md           # Terraform infrastructure reference
+│   └── DEPLOYMENT_PROGRESS_CHECKLIST.md   # Active deployment tracker
 │
 └── ▶️ run_local_stack.sh                  # Local API + Streamlit launcher
 ```
@@ -316,27 +319,35 @@ See [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) for d
 | Layer | Technology |
 |-------|-----------|
 | **Frontend** | Streamlit |
+| **Backend API** | FastAPI |
 | **Orchestration** | Apache Airflow 3.1 |
 | **LLM** | OpenAI API (GPT-4o-mini) |
-| **Database** | PostgreSQL (AWS RDS) |
+| **Database** | PostgreSQL |
 | **File Storage** | AWS S3 |
 | **PDF Processing** | pdfplumber, camelot |
 | **Containerization** | Docker & Docker Compose |
+| **Cloud Infra** | AWS EC2 + Terraform |
+| **CI/CD** | GitHub Actions |
 | **Authentication** | JWT Tokens |
 
 ---
 
 ## 📋 Quick Start
 
-### **With Docker**
+### **With Docker (Local)**
 ```bash
 git clone https://github.com/harshalsp0011/utility-billing-ai.git
 cd utility-billing-ai
 cp .env.example .env
 # Edit .env with your AWS & OpenAI credentials
-docker-compose up -d
+docker compose up -d --build api streamlit
 # Access: http://localhost:8501
 ```
+
+### **Production (AWS EC2 — already deployed)**
+- Public URL: `http://98.89.240.117:8501`
+- Infra provisioned via Terraform (`terraform/`)
+- See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for full setup guide
 
 ### **Local Development**
 ```bash
@@ -351,26 +362,77 @@ streamlit run app/streamlit_app.py
 
 ## 📚 Documentation
 
-- **[documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md)** - Project purpose and scope
-- **[documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md)** - System architecture and component design
-- **[documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md)** - Local and AWS deployment guide
-- **[Airflow Documentation](https://airflow.apache.org/)**
-- **[Streamlit Docs](https://docs.streamlit.io/)**
-- **[OpenAI API](https://platform.openai.com/docs)**
+| File | Purpose |
+|------|--------|
+| [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) | Project purpose, scope, and goals |
+| [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) | System architecture and component design |
+| [documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md) | Local development deployment guide |
+| [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) | **Primary cloud setup guide** — Terraform + EC2 + Docker deploy |
+| [documentation/TERRAFORM_INFRA_GUIDE.md](documentation/TERRAFORM_INFRA_GUIDE.md) | Terraform infrastructure reference |
+| [documentation/DEPLOYMENT_PROGRESS_CHECKLIST.md](documentation/DEPLOYMENT_PROGRESS_CHECKLIST.md) | Current deployment progress and pending steps |
+| [terraform/README.md](terraform/README.md) | Terraform folder file-by-file breakdown |
 
 ---
 
 ## 🎓 Project Status
 
-✅ **Production Ready**
+✅ **Production Ready — Deployed on AWS**
 - Core extraction pipeline working
 - Tariff rule parsing with LLM
-- Airflow orchestration (3-task DAG)
+- Airflow orchestration (3-task DAG) — optional, disabled in default deploy
 - PostgreSQL database setup
 - Streamlit UI (6 pages)
 - AWS S3 integration
 - Authentication system
 - Multi-agent architecture
+- FastAPI backend (REST API layer)
+- AWS EC2 provisioned via Terraform (`t3.micro`, `us-east-1`)
+- GitHub Actions CI/CD — auto-deploys on merge to `main`
+
+---
+
+## ⚙️ CI/CD — Auto Deploy on Merge to `main`
+
+The workflow file at [.github/workflows/deploy.yml](.github/workflows/deploy.yml) automatically deploys to EC2 every time you merge `dev` → `main`.
+
+### How it works
+
+```
+dev branch  ──► pull request ──► merge to main
+                                      │
+                                      ▼
+                            GitHub Actions triggers
+                                      │
+                                      ▼
+                            SSH into EC2 (98.89.240.117)
+                                      │
+                                      ▼
+                      git fetch + git reset --hard origin/main
+                                      │
+                                      ▼
+                  docker compose up -d --build api streamlit
+```
+
+### One-time GitHub setup (required before first auto-deploy)
+
+Go to your repo → **Settings → Secrets and variables → Actions → New repository secret** and add these three secrets:
+
+| Secret Name | Value |
+|-------------|-------|
+| `EC2_HOST` | `98.89.240.117` |
+| `EC2_USER` | `ubuntu` |
+| `EC2_SSH_KEY` | Full contents of `~/Desktop/utility-billing-key.pem` |
+
+### What about `.env`?
+
+`.env` is **gitignored** — `git pull` never touches it. It stays on the EC2 server permanently after you copied it there once via `scp`. You only need to update it on the server if you rotate API keys.
+
+### Workflow
+
+| Branch | Purpose | Auto-deploy? |
+|--------|---------|-------------|
+| `dev` | Development, testing | ❌ No |
+| `main` | Production code | ✅ Yes, on every push/merge |
 
 ---
 
@@ -381,7 +443,7 @@ streamlit run app/streamlit_app.py
 
 ---
 
-**Last Updated**: December 7, 2025 | **Version**: 1.0.0 | **Status**: ✅ Production Ready
+**Last Updated**: March 13, 2026 | **Version**: 1.1.0 | **Status**: ✅ Production Ready — AWS EC2 Live
 
 <div align="center">
 
