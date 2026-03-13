@@ -193,7 +193,12 @@ cd utility-billing-ai
 Create `.env` with environment-specific values, then run:
 
 ```bash
-docker compose up -d --build api streamlit airflow
+# Preferred (current plan): backend + streamlit only
+docker compose up -d --build api streamlit
+
+# Optional later (if/when needed): include airflow
+# docker compose up -d --build api streamlit airflow
+
 docker compose exec api python -m src.database.init_db
 ```
 
@@ -291,3 +296,57 @@ Template:
 3. Why:
 4. Commands used:
 5. Validation done:
+
+### 2026-03-13 (Current Session)
+
+1. Change made:
+- Provisioned Terraform infra successfully (EC2, SG, IAM role/profile, EIP).
+- Enabled EC2 Docker bootstrap via user_data.
+- Synced local workspace code to EC2.
+- Switched preferred app startup to `api + streamlit` only for now.
+
+2. Why:
+- Keep deployment simple and aligned with current scope (no Airflow runtime required now).
+
+3. Commands used:
+- Infra create:
+```bash
+cd terraform
+terraform init
+terraform plan
+terraform apply -auto-approve
+```
+- Code transfer:
+```bash
+# initial env copy
+scp -i ~/Desktop/utility-billing-key.pem .env ubuntu@<PUBLIC_IP>:/home/ubuntu/utility-billing-ai/.env
+
+# full workspace sync to ensure remote matches local
+rsync -az --delete \
+  --exclude '.git' --exclude 'venv' --exclude '__pycache__' --exclude '.DS_Store' \
+  --exclude 'logs/' --exclude 'data/raw/' --exclude 'data/samples/' \
+  -e "ssh -i ~/Desktop/utility-billing-key.pem" \
+  /path/to/local/utility-billing-ai/ \
+  ubuntu@<PUBLIC_IP>:/home/ubuntu/utility-billing-ai/
+```
+
+4. Validation done:
+- EC2 AWS status checks: `running`, `system ok`, `instance ok`.
+- Security group verified: SSH and 8501 present.
+
+5. Current issue:
+- SSH timed out during banner exchange after large remote build logs.
+- Public 8501 check also timed out.
+
+6. Recovery next commands:
+```bash
+# reboot instance to recover ssh daemon/network stack if needed
+aws ec2 reboot-instances --region us-east-1 --instance-ids <INSTANCE_ID>
+
+# after 60-120s
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@<PUBLIC_IP>
+cd ~/utility-billing-ai
+docker compose up -d --build api streamlit
+docker compose exec -T api python -m src.database.init_db
+docker compose ps
+```
