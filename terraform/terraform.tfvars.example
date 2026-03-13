@@ -1,0 +1,22 @@
+# Keep region same as your existing services unless you intentionally split regions.
+aws_region            = "us-east-1"
+# Name prefix used for resource names and tags.
+project_name          = "utility-billing-ai"
+environment           = "prod"
+# Cost-effective default.
+instance_type         = "t3a.small"
+root_volume_size_gb   = 20
+# Must match an existing EC2 key pair in your AWS account.
+ssh_key_name          = "replace-with-your-ec2-keypair-name"
+# Replace with your current public IP in CIDR format (example: 1.2.3.4/32).
+ssh_allowed_cidr      = "x.x.x.x/32"
+# Keep open during early testing; tighten later to office/VPN CIDRs.
+streamlit_allowed_cidrs = ["0.0.0.0/0"]
+assign_elastic_ip     = true
+
+# Phase 2 bootstrap (Docker install on first boot).
+enable_docker_bootstrap = true
+ec2_admin_user          = "ubuntu"
+
+# Existing app bucket (already created outside Terraform)
+existing_s3_bucket_name = "replace-with-existing-bucket-name"

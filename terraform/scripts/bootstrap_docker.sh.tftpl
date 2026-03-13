@@ -1,0 +1,27 @@
+#!/bin/bash
+set -euxo pipefail
+
+# Keep package lists fresh and install baseline tools.
+apt-get update -y
+apt-get install -y ca-certificates curl gnupg git
+
+# Install Docker official apt repository.
+install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /tmp/docker.gpg
+gpg --dearmor -o /etc/apt/keyrings/docker.gpg /tmp/docker.gpg
+chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo \"$VERSION_CODENAME\") stable" > /etc/apt/sources.list.d/docker.list
+
+apt-get update -y
+apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+# Enable Docker at boot and start now.
+systemctl enable docker
+systemctl start docker
+
+# Allow configured admin user to run docker without sudo (after re-login).
+usermod -aG docker ${ec2_admin_user}
+
+# Write marker file for quick verification.
+echo "Docker bootstrap completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /var/log/docker-bootstrap.done
