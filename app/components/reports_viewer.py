@@ -6,7 +6,6 @@ import pandas as pd
 import requests
 import streamlit as st
 
-from src.agents.Variable_Updates.extra_charges import store_override_values
 from src.utils.config import get_env
 
 
@@ -49,7 +48,6 @@ def _df_to_excel_bytes(df: pd.DataFrame, sheet_name: str) -> BytesIO:
     return buffer
 
 
-@st.cache_data(ttl=60, show_spinner=False)
 def _get_api_json(path: str, params: dict | None = None):
     last_exc: Exception | None = None
     for attempt in range(3):
@@ -82,6 +80,25 @@ def _result_to_display_df(rows: list[dict]) -> pd.DataFrame:
     return result_df
 
 
+def _normalize_grid_df(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    out = df.copy()
+
+    for col in ["override_tra", "override_rdm", "override_sbc", "override_ram"]:
+        if col not in out.columns:
+            out[col] = 0.0
+        else:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    for col in ["billed_kwh", "billed_demand", "bill_amount"]:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce").fillna(0.0)
+
+    return out
+
+
 def render_report_viewer():
     st.session_state.setdefault("run_override_calc", False)
 
@@ -102,8 +119,12 @@ def render_report_viewer():
     sc_code = ALLOWED_SC_MAP[sc_label]
 
     grid_key = f"override_grid_{account}_{sc_code}"
+    selection_key = "report_selection_key"
+    current_selection = (account, sc_code)
+    previous_selection = st.session_state.get(selection_key)
 
-    if grid_key not in st.session_state:
+    # Load grid from API only when account / service class changes
+    if previous_selection != current_selection or grid_key not in st.session_state:
         try:
             rows = _get_api_json(
                 "/api/v1/reports/grid",
@@ -117,12 +138,16 @@ def render_report_viewer():
             st.error("Required billing columns not found.")
             return
 
-        st.session_state[grid_key] = pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+        st.session_state[grid_key] = _normalize_grid_df(df)
+        st.session_state[selection_key] = current_selection
+        st.session_state.run_override_calc = False
 
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
     edited = st.data_editor(
         st.session_state[grid_key],
+        key=f"editor_{account}_{sc_code}",
         num_rows="fixed",
         use_container_width=True,
         column_config={
@@ -130,21 +155,55 @@ def render_report_viewer():
                 "TRA ($/kWh)", format="%.5f", step=0.00001
             ),
             "override_rdm": st.column_config.NumberColumn(
-                "RDM ($/unit)", format="%.2f", step=0.01
+                "RDM ($/unit)", format="%.5f", step=0.00001
+            ),
+            "override_sbc": st.column_config.NumberColumn(
+                "SBC ($/unit)", format="%.5f", step=0.00001
+            ),
+            "override_ram": st.column_config.NumberColumn(
+                "RAM ($/unit)", format="%.5f", step=0.00001
             ),
         },
     )
 
-    if not edited.equals(st.session_state[grid_key]):
-        st.session_state[grid_key] = edited
-        # Save overrides immediately to database
-        store_override_values(edited, bill_date_col="bill_date")
-        st.session_state.run_override_calc = False
+    # Only update local session state here. Do not save yet.
+    st.session_state[grid_key] = _normalize_grid_df(edited)
 
-    st.caption("Tip: Press Enter or click outside the cell to commit a value.")
+    st.caption("Edit all values first, then click Save Overrides.")
 
-    if st.button("Calculate Expected Bill", type="primary"):
-        st.session_state.run_override_calc = True
+    c1, c2 = st.columns(2)
+
+    with c1:
+        if st.button("Save Overrides", type="primary", use_container_width=True):
+            payload_rows = st.session_state[grid_key].to_dict(orient="records")
+
+            try:
+                result = _post_api_json(
+                    "/api/v1/reports/save-overrides",
+                    {
+                        "account_id": account,
+                        "sc_code": sc_code,
+                        "rows": payload_rows,
+                    },
+                )
+            except requests.RequestException as exc:
+                st.error(f"Unable to save overrides to API: {exc}")
+                return
+
+            refreshed_rows = result.get("rows", [])
+            refreshed_df = pd.DataFrame(refreshed_rows)
+
+            st.session_state[grid_key] = _normalize_grid_df(refreshed_df)
+
+            # Force one clean reload cycle next run so UI and API stay in sync
+            st.session_state[selection_key] = None
+
+            st.success("Overrides saved successfully.")
+            st.rerun()
+
+    with c2:
+        if st.button("Calculate Expected Bill", use_container_width=True):
+            st.session_state.run_override_calc = True
 
     if st.session_state.run_override_calc:
         payload_rows = st.session_state[grid_key].to_dict(orient="records")
@@ -167,10 +226,10 @@ def render_report_viewer():
 
         st.dataframe(result_df, use_container_width=True)
 
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Total Actual", f"${result.get('total_actual', 0.0):,.2f}")
-        c2.metric("Total Expected", f"${result.get('total_expected', 0.0):,.2f}")
-        c3.metric("Total Variance", f"${result.get('total_variance', 0.0):,.2f}")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("Total Actual", f"${result.get('total_actual', 0.0):,.2f}")
+        m2.metric("Total Expected", f"${result.get('total_expected', 0.0):,.2f}")
+        m3.metric("Total Variance", f"${result.get('total_variance', 0.0):,.2f}")
 
         st.download_button(
             "Download Expected Bill (Excel)",
