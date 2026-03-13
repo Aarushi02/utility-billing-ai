@@ -87,17 +87,25 @@ class BillValidationResult(Base):
 
 class LogEntry(Base):
     """
-    Stores application logs for audit/debug.
+    Stores all application logs (audit, debug, runtime) in one place.
+    Filter by source to separate api/streamlit/utility_billing logs.
     """
     __tablename__ = "logs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    source = Column(String(100), nullable=True)   # api | streamlit | airflow | utility_billing
     level = Column(String(20), nullable=False)
-    description = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
     message = Column(Text, nullable=False)
     logger_name = Column(String(255), nullable=True)
+    log_file = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     context = Column(JSONB)
+
+    __table_args__ = (
+        Index("idx_logs_source_created", "source", "created_at"),
+        Index("idx_logs_level_created", "level", "created_at"),
+    )
 
 
 # --- New: Tariff Documents ---

@@ -1,6 +1,7 @@
 """Utility functions to trigger and monitor Airflow through backend API endpoints."""
 
 import time
+from typing import Any
 
 import requests
 import streamlit as st
@@ -13,7 +14,7 @@ logger = get_logger(__name__)
 API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
 
 
-def _post_api_json(path: str, payload: dict | None = None):
+def _post_api_json(path: str, payload: dict | None = None) -> dict[str, Any]:
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
@@ -30,8 +31,10 @@ def _post_api_json(path: str, payload: dict | None = None):
     if last_exc:
         raise last_exc
 
+    raise RuntimeError("Unexpected API POST flow: no response and no exception captured")
 
-def _get_api_json(path: str):
+
+def _get_api_json(path: str) -> dict[str, Any]:
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
@@ -47,6 +50,8 @@ def _get_api_json(path: str):
 
     if last_exc:
         raise last_exc
+
+    raise RuntimeError("Unexpected API GET flow: no response and no exception captured")
 
 
 def trigger_dag_run():

@@ -1,16 +1,16 @@
 # Utility Billing AI - Deployment
 
-This is the single deployment guide for local testing first, then AWS production.
+This project uses a single `docker-compose.yml` for both local and cloud.
 
-## A) Local Docker (Step 1)
+## A) Local Smoke Test
 
-### Start API + Streamlit
+Start:
 
 ```bash
 docker compose up -d --build api streamlit
 ```
 
-### Verify
+Verify:
 
 ```bash
 docker compose ps
@@ -23,92 +23,136 @@ Expected:
 1. API health returns `{"status":"ok"}`
 2. Streamlit returns `200`
 
-Swagger URL:
-
-- `http://127.0.0.1:8000/docs`
-
 Stop:
 
 ```bash
 docker compose down
 ```
 
-## B) AWS Production (Step 2)
+## B) EC2 Production (Single-VM)
 
 Target behavior:
 
-1. Streamlit is publicly reachable.
-2. API is private/internal for Streamlit only.
+1. Streamlit is public on port 8501.
+2. API is private on EC2 localhost only.
+3. Airflow is private on EC2 localhost only.
 
-### Services used
+`docker-compose.yml` is already configured for this:
 
-1. EC2
-2. Security Group
-3. Elastic IP
-4. IAM Role
-5. S3
+1. API -> `127.0.0.1:8000:8000`
+2. Airflow -> `127.0.0.1:8080:8080`
+3. Streamlit -> `8501:8501`
 
-### Deploy commands on EC2
+### 1) AWS setup
+
+1. Launch EC2 (Ubuntu 22.04+ recommended)
+2. Attach Elastic IP
+3. Attach IAM role if using S3
+
+Security Group inbound:
+
+1. `22` from your IP
+2. `8501` from internet (or restrict to your office/VPN IP)
+
+Do not open `8000` or `8080`.
+
+### 2) Server bootstrap
+
+```bash
+sudo apt update
+sudo apt install -y ca-certificates curl git
+
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+sudo chmod a+r /etc/apt/keyrings/docker.gpg
+
+echo \
+	"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
+	$(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
+	sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+sudo usermod -aG docker $USER
+newgrp docker
+```
+
+### 3) Deploy app
 
 ```bash
 git clone <repo-url>
 cd utility-billing-ai
-# create .env with production values
-
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit
 ```
 
-### Security group inbound
+Create `.env` with production values.
 
-Allow:
+Start stack:
 
-1. 22 (your IP)
-2. 80 (internet)
-3. 443 (internet)
+```bash
+docker compose up -d --build api streamlit airflow
+```
 
-Do not allow:
+Initialize schema/migrations:
 
-1. 8000
-2. 8501
-3. 8080
+```bash
+docker compose exec api python -m src.database.init_db
+```
 
-### Reverse proxy
+### 4) Verify production
 
-Use Caddy/Nginx in front of Streamlit for public HTTPS.
+From EC2:
 
-## C) Environment Variables (minimum)
+```bash
+curl -sS http://127.0.0.1:8000/api/v1/health/live
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080
+```
 
-Required:
+Expected:
 
-1. `LOGIC_USERNAME`
-2. `LOGIC_PASSWORD`
-3. `DB_TYPE`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
-4. `API_BASE_URL=http://api:8000` (container-to-container)
+1. API health returns `{"status":"ok"}`
+2. Streamlit returns `200`
+3. Airflow returns `200` only from localhost on EC2
 
-Optional:
+From your laptop/browser:
+
+1. `http://<EC2_PUBLIC_IP>:8501` works
+2. `http://<EC2_PUBLIC_IP>:8000` should not be reachable
+3. `http://<EC2_PUBLIC_IP>:8080` should not be reachable
+
+## C) Required Environment Variables
+
+Minimum:
+
+1. `DB_TYPE`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`
+2. `LOGIC_USERNAME`, `LOGIC_PASSWORD`
+3. `API_BASE_URL=http://api:8000`
+
+Recommended:
 
 1. `OPENAI_API_KEY`, `OPENAI_MODEL`
 2. `AWS_BUCKET_NAME`, `AWS_REGION`
-3. `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY` (prefer IAM role on EC2)
+3. Prefer IAM role over static AWS access keys on EC2
 
-## D) Common Commands
+## D) Operate / Troubleshoot
 
-Rebuild and restart:
+Restart:
 
 ```bash
-docker compose up -d --build api streamlit
+docker compose up -d --build api streamlit airflow
 ```
 
-View logs:
+Logs:
 
 ```bash
 docker compose logs --tail=200 api
 docker compose logs --tail=200 streamlit
+docker compose logs --tail=200 airflow
 ```
 
-Full cleanup and recreate:
+Recreate:
 
 ```bash
 docker compose down --remove-orphans
-docker compose up -d --build api streamlit
+docker compose up -d --build api streamlit airflow
 ```
