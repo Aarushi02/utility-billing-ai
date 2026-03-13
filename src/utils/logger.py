@@ -35,6 +35,7 @@ os.makedirs(LOG_DIR, exist_ok=True)
 # 2) Define log file name (with timestamp rotation)
 # ----------------------------------------------------------------------
 LOG_FILE = os.path.join(LOG_DIR, "utility_billing.log")
+LOG_SOURCE = os.environ.get("LOG_SOURCE", "utility_billing")
 
 # ----------------------------------------------------------------------
 # 3) Configure logging format
@@ -51,12 +52,7 @@ class DBLogHandler(logging.Handler):
             # Lazy import to avoid circular deps at module load
             from src.database.db_utils import insert_log_entry
 
-            # Raw message (just the log message itself)
-            description = record.getMessage()
-            
-            # Formatted message (with timestamp, level, logger name)
             message = self.format(record)
-            
             context = {
                 "module": record.module,
                 "filename": record.filename,
@@ -65,9 +61,11 @@ class DBLogHandler(logging.Handler):
             }
             insert_log_entry(
                 level=record.levelname,
-                description=description,
                 message=message,
+                description=record.getMessage(),
                 logger_name=record.name,
+                source=LOG_SOURCE,
+                log_file=LOG_FILE,
                 context=context,
             )
         except Exception:

@@ -1,0 +1,15 @@
+# Replace domains and email before use.
+
+{
+	email admin@yourdomain.com
+}
+
+app.yourdomain.com {
+	reverse_proxy 127.0.0.1:8501
+}
+
+# Optional: expose API docs externally.
+# Keep this block commented to keep API private.
+# api.yourdomain.com {
+# 	reverse_proxy 127.0.0.1:8000
+# }

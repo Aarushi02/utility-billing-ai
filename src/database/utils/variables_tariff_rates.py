@@ -1,10 +1,8 @@
 """
 variables_tariff_rates.py
 -------------------------
-Variable tariff rate insert utilities for SBC, TRA, RDM, and RAM.
-
-This module centralizes rate insert logic to keep db_utils focused on
-general database operations while preserving existing behavior.
+Variable tariff rate insert/update utilities for SBC, TRA, RDM, and RAM.
+Month-year based UPSERT logic using effective_date normalized to first day of month.
 """
 
 from dateutil import parser as dateparser
@@ -12,206 +10,164 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from src.database.db_utils import get_session, logger
 from src.database.models import (
-	SBCSystemBenefitsCharge,
-	TRATransmissionRevenueAdjustment,
-	RDMRevenueDecouplingMechanism,
-	RAMRateAdjustmentMechanism,
+    SBCSystemBenefitsCharge,
+    TRATransmissionRevenueAdjustment,
+    RDMRevenueDecouplingMechanism,
+    RAMRateAdjustmentMechanism,
 )
 
 
-def insert_sbc_rate(record: dict):
-	"""
-	Insert a System Benefits Charge (SBC) rate row.
-	Expects keys: effective_date (date or ISO string), sc_code, rate
-	Returns the inserted row id or None on failure.
-	"""
-	logger.info("start of insert_sbc_rate")
-	session = get_session()
-	try:
-		eff = record.get("effective_date")
-		if isinstance(eff, str):
-			eff = dateparser.parse(eff).date()
+def _normalize_to_month_start(eff):
+    """
+    Convert input date/string to first day of that month.
+    Example:
+        2021-07-15 -> 2021-07-01
+    """
+    if eff is None:
+        return None
 
-		row = SBCSystemBenefitsCharge(
-			effective_date=eff,
-			sc_code=record.get("sc_code"),
-			rate=record.get("rate"),
-		)
-		session.add(row)
-		session.commit()
-		logger.info(f"Inserted SBC rate id={row.id} sc={row.sc_code} eff={row.effective_date}")
-		return row.id
-	except SQLAlchemyError as e:
-		logger.error(f"Failed to insert SBC rate: {e}")
-		session.rollback()
-		return None
-	finally:
-		logger.info("end of insert_sbc_rate")
-		session.close()
+    if isinstance(eff, str):
+        eff = dateparser.parse(eff).date()
+
+    return eff.replace(day=1)
+
+
+def _upsert_rate(model, record: dict):
+    session = get_session()
+    try:
+        eff = _normalize_to_month_start(record.get("effective_date"))
+        sc_code = str(record.get("sc_code")).strip() if record.get("sc_code") is not None else None
+        rate = record.get("rate")
+
+        if eff is None or not sc_code or rate is None:
+            logger.warning(
+                f"Skipping upsert for {model.__tablename__}: "
+                f"effective_date={eff}, sc_code={sc_code}, rate={rate}"
+            )
+            return None
+
+        # newest matching month row first
+        candidates = (
+            session.query(model)
+            .filter(model.sc_code == sc_code)
+            .order_by(model.effective_date.desc(), model.id.desc())
+            .all()
+        )
+
+        existing = None
+        for row in candidates:
+            if row.effective_date.year == eff.year and row.effective_date.month == eff.month:
+                existing = row
+                break
+
+        if existing:
+            existing.rate = rate
+            existing.effective_date = eff
+            session.flush()
+            session.commit()
+            session.refresh(existing)
+            logger.info(
+                f"Updated {model.__tablename__} id={existing.id} "
+                f"sc={sc_code} month={eff.strftime('%Y-%m')} rate={rate}"
+            )
+            return existing.id
+
+        row = model(
+            effective_date=eff,
+            sc_code=sc_code,
+            rate=rate,
+        )
+        session.add(row)
+        session.flush()
+        session.commit()
+        session.refresh(row)
+
+        logger.info(
+            f"Inserted {model.__tablename__} id={row.id} "
+            f"sc={sc_code} month={eff.strftime('%Y-%m')} rate={rate}"
+        )
+        return row.id
+
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to upsert rate in {model.__tablename__}: {e}")
+        session.rollback()
+        return None
+    finally:
+        session.close()
+
+
+def insert_sbc_rate(record: dict):
+    return _upsert_rate(SBCSystemBenefitsCharge, record)
 
 
 def insert_tra_rate(record: dict):
-	"""
-	Insert a Transmission Revenue Adjustment (TRA) rate row.
-	Expects keys: effective_date (date or ISO string), sc_code, rate
-	Returns the inserted row id or None on failure.
-	"""
-	logger.info("start of insert_tra_rate")
-	session = get_session()
-	try:
-		eff = record.get("effective_date")
-		if isinstance(eff, str):
-			eff = dateparser.parse(eff).date()
-
-		row = TRATransmissionRevenueAdjustment(
-			effective_date=eff,
-			sc_code=record.get("sc_code"),
-			rate=record.get("rate"),
-		)
-		session.add(row)
-		session.commit()
-		logger.info(f"Inserted TRA rate id={row.id} sc={row.sc_code} eff={row.effective_date}")
-		return row.id
-	except SQLAlchemyError as e:
-		logger.error(f"Failed to insert TRA rate: {e}")
-		session.rollback()
-		return None
-	finally:
-		logger.info("end of insert_tra_rate")
-		session.close()
+    return _upsert_rate(TRATransmissionRevenueAdjustment, record)
 
 
 def insert_rdm_rate(record: dict):
-	"""
-	Insert a Revenue Decoupling Mechanism (RDM) rate row.
-	Expects keys: effective_date (date or ISO string), sc_code, rate
-	Returns the inserted row id or None on failure.
-	"""
-	logger.info("start of insert_rdm_rate")
-	session = get_session()
-	try:
-		eff = record.get("effective_date")
-		if isinstance(eff, str):
-			eff = dateparser.parse(eff).date()
-
-		row = RDMRevenueDecouplingMechanism(
-			effective_date=eff,
-			sc_code=record.get("sc_code"),
-			rate=record.get("rate"),
-		)
-		session.add(row)
-		session.commit()
-		logger.info(f"Inserted RDM rate id={row.id} sc={row.sc_code} eff={row.effective_date}")
-		return row.id
-	except SQLAlchemyError as e:
-		logger.error(f"Failed to insert RDM rate: {e}")
-		session.rollback()
-		return None
-	finally:
-		logger.info("end of insert_rdm_rate")
-		session.close()
+    return _upsert_rate(RDMRevenueDecouplingMechanism, record)
 
 
 def insert_ram_rate(record: dict):
-	"""
-	Insert a Rate Adjustment Mechanism (RAM) rate row.
-	Expects keys: effective_date (date or ISO string), sc_code, rate
-	Returns the inserted row id or None on failure.
-	"""
-	logger.info("start of insert_ram_rate")
-	session = get_session()
-	try:
-		eff = record.get("effective_date")
-		if isinstance(eff, str):
-			eff = dateparser.parse(eff).date()
-
-		row = RAMRateAdjustmentMechanism(
-			effective_date=eff,
-			sc_code=record.get("sc_code"),
-			rate=record.get("rate"),
-		)
-		session.add(row)
-		session.commit()
-		logger.info(f"Inserted RAM rate id={row.id} sc={row.sc_code} eff={row.effective_date}")
-		return row.id
-	except SQLAlchemyError as e:
-		logger.error(f"Failed to insert RAM rate: {e}")
-		session.rollback()
-		return None
-	finally:
-		logger.info("end of insert_ram_rate")
-		session.close()
+    return _upsert_rate(RAMRateAdjustmentMechanism, record)
 
 
 def fetch_rates_for_dates(table_name: str, sc_code: str, effective_dates: list):
-	"""
-	Fetch rates for a given SC code and a list of effective dates.
-	
-	Parameters
-	----------
-	table_name : str
-		One of: "sbc", "tra", "rdm", "ram"
-	sc_code : str
-		Service class code
-	effective_dates : list
-		List of dates (date objects) or ISO date strings
-	
-	Returns
-	-------
-	list of dict
-		Each item has: effective_date (YYYY-MM-DD), rate
-	"""
-	logger.info("start of fetch_rates_for_dates")
-	model_map = {
-		"sbc": SBCSystemBenefitsCharge,
-		"tra": TRATransmissionRevenueAdjustment,
-		"rdm": RDMRevenueDecouplingMechanism,
-		"ram": RAMRateAdjustmentMechanism,
-	}
+    logger.info("start fetch_rates_for_dates")
 
-	model = model_map.get((table_name or "").lower())
-	if model is None:
-		logger.warning(f"Unknown table_name={table_name}")
-		return []
+    model_map = {
+        "sbc": SBCSystemBenefitsCharge,
+        "tra": TRATransmissionRevenueAdjustment,
+        "rdm": RDMRevenueDecouplingMechanism,
+        "ram": RAMRateAdjustmentMechanism,
+    }
 
-	if not effective_dates:
-		return []
+    model = model_map.get((table_name or "").lower())
+    if not model or not effective_dates:
+        return []
 
-	# Normalize dates
-	normalized_dates = []
-	for d in effective_dates:
-		if isinstance(d, str):
-			normalized_dates.append(dateparser.parse(d).date())
-		else:
-			normalized_dates.append(d)
+    normalized_dates = []
+    for d in effective_dates:
+        parsed = dateparser.parse(d).date() if isinstance(d, str) else d
+        normalized_dates.append(parsed)
 
-	# Keep a set for filtering
-	date_set = set(normalized_dates)
+    session = get_session()
+    try:
+        # newest rows first
+        rows = (
+            session.query(model)
+            .filter(model.sc_code == sc_code)
+            .order_by(model.effective_date.desc(), model.id.desc())
+            .all()
+        )
 
-	session = get_session()
-	try:
-		rows = (
-			session.query(model)
-			.filter(model.sc_code == sc_code)
-			.filter(model.effective_date.in_(date_set))
-			.all()
-		)
-		# Map to dict for quick lookup
-		row_map = {
-			r.effective_date: r.rate for r in rows
-		}
-		# Preserve input order, return only available dates
-		results = []
-		for d in normalized_dates:
-			if d in row_map:
-				results.append({
-					"effective_date": d.strftime("%Y-%m-%d"),
-					"rate": row_map[d],
-				})
-		return results
-	except SQLAlchemyError as e:
-		logger.error(f"Failed to fetch rates for {table_name}: {e}")
-		return []
-	finally:
-		logger.info("end of fetch_rates_for_dates")
-		session.close()
+        # keep only latest row per (year, month)
+        latest_by_month = {}
+        for row in rows:
+            key = (row.effective_date.year, row.effective_date.month)
+            if key not in latest_by_month:
+                latest_by_month[key] = row.rate
+
+        results = []
+        for original_input, lookup_date in zip(effective_dates, normalized_dates):
+            key = (lookup_date.year, lookup_date.month)
+            rate = latest_by_month.get(key)
+
+            results.append({
+                "effective_date": (
+                    original_input
+                    if isinstance(original_input, str)
+                    else original_input.strftime("%Y-%m-%d")
+                ),
+                "rate": float(rate) if rate is not None else None,
+            })
+
+        return results
+
+    except SQLAlchemyError as e:
+        logger.error(f"Failed to fetch rates for {table_name}: {e}")
+        return []
+
+    finally:
+        session.close()
+        logger.info("end fetch_rates_for_dates")

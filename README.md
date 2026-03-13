@@ -172,10 +172,12 @@ The Streamlit frontend provides an intuitive dashboard with **6 main pages**:
 utility-billing-ai/
 │
 ├── 📄 README.md                           # This file
-├── 📄 PROJECT_OVERVIEW.md                 # Detailed project documentation
+├── 📄 RUNBOOK_DEPLOYMENT.md               # Local/deployment runbook
 ├── 📦 requirements.txt                    # Python dependencies
 ├── 🐋 docker-compose.yml                  # Container orchestration
-├── 🔧 .env.example                        # Environment variables template
+├── 🐋 docker-compose.prod.yml             # Production port-binding override
+├── 🔧 .env                                # Runtime environment values (local/server)
+├── 🔧 .env.example                        # Sanitized environment template
 ├── 🔒 LICENSE                             # Project license
 │
 ├── 🌐 app/                                # Streamlit Frontend
@@ -214,13 +216,18 @@ utility-billing-ai/
 │   │   │   └── report_generator.py
 │   │   └── validation_agent/              # Data Validation
 │   │       └── tafiff_defination_validation.py
+│   ├── api/                               # FastAPI backend boundary
+│   │   ├── main.py                        # API app entrypoint
+│   │   └── routers/                       # API route handlers (+ local models)
 │   ├── database/                          # Data Layer
 │   │   ├── db_utils.py                    # Database utilities
 │   │   ├── init_db.py                     # Database initialization
-│   │   └── models.py                      # SQLAlchemy ORM models
+│   │   ├── models.py                      # SQLAlchemy ORM models
+│   │   └── utils/                         # Domain-specific DB helpers
 │   ├── orchestrator/                      # Airflow Integration
 │   │   ├── pipeline_runner.py
 │   │   └── workflow_manager.py
+│   ├── services/                          # Backend business/use-case logic
 │   └── utils/                             # Core Utilities
 │       ├── config.py                      # Configuration management
 │       ├── data_paths.py                  # Data path constants
@@ -233,9 +240,8 @@ utility-billing-ai/
 │   ├── airflow.cfg                        # Airflow configuration
 │   ├── simple_auth_manager_passwords.json # Airflow auth (generated)
 │   ├── dags/                              # DAG definitions
-│   │   ├── utility_billing_dag.py         # Main billing pipeline (3 tasks)
-│   │   ├── tariff_pipeline_dag.py         # Tariff processing pipeline
-│   │   └── test_dag.py                    # Test/example DAG
+│   │   ├── pipeline_runner_dag.py         # Main billing pipeline
+│   │   └── tariff_pipeline_dag.py         # Tariff processing pipeline
 │   ├── logs/                              # Airflow execution logs
 │   │   ├── dag_processor/                 # DAG parsing logs
 │   │   └── scheduler/                     # Scheduler logs
@@ -248,14 +254,12 @@ utility-billing-ai/
 │   ├── samples/                           # Test/sample files
 │   └── output/                            # Generated outputs
 │
-├── 📔 notebooks/                          # Jupyter Notebooks
-│   ├── exploration/                       # Data exploration notebooks
-│   └── testing/                           # Testing & debugging notebooks
+├── 📚 documentation/                      # Project architecture and guides
+│   ├── ARCHITECTURE.md
+│   ├── DEPLOYMENT.md
+│   └── PROJECT_OVERVIEW.md
 │
-└── ✅ tests/                              # Unit & Integration Tests
-    ├── test_db_connection.py
-    ├── test_parser_logic.py
-    └── test_error_detection.py
+└── ▶️ run_local_stack.sh                  # Local API + Streamlit launcher
 ```
 
 ---
@@ -286,7 +290,7 @@ USER VIEWS RESULTS (Audit Bills Page)
 GENERATE REPORT (PDF/CSV export)
 ```
 
-See [PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md) for detailed workflow examples.
+See [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) for detailed workflow examples.
 
 ---
 
@@ -347,7 +351,9 @@ streamlit run app/streamlit_app.py
 
 ## 📚 Documentation
 
-- **[PROJECT_OVERVIEW.md](PROJECT_OVERVIEW.md)** - Complete technical documentation
+- **[documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md)** - Project purpose and scope
+- **[documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md)** - System architecture and component design
+- **[documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md)** - Local and AWS deployment guide
 - **[Airflow Documentation](https://airflow.apache.org/)**
 - **[Streamlit Docs](https://docs.streamlit.io/)**
 - **[OpenAI API](https://platform.openai.com/docs)**
