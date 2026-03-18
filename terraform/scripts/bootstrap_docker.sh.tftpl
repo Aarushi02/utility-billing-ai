@@ -1,6 +1,13 @@
 #!/bin/bash
 set -euxo pipefail
 
+# Add 2GB swap so t3.micro does not crash under Docker memory pressure.
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
 # Keep package lists fresh and install baseline tools.
 apt-get update -y
 apt-get install -y ca-certificates curl gnupg git
