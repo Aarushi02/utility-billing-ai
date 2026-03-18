@@ -63,12 +63,12 @@ This checklist tracks exactly what has been completed so far and what is still p
 
 1. Reboot EC2 once
 - [ ] Run:
-  `aws ec2 reboot-instances --region us-east-1 --instance-ids i-060fd87cd3071438d`
+  `aws ec2 reboot-instances --region us-east-1 --instance-ids i-0f8cf5fb0b2591208`
 
 2. Wait and retry SSH
 - [ ] Wait 60 to 120 seconds
 - [ ] Test:
-  `ssh -i ~/Desktop/utility-billing-key.pem ubuntu@98.89.240.117 "echo connected && uptime"`
+  `ssh -i ~/Desktop/utility-billing-key.pem ubuntu@34.197.15.20 "echo connected && uptime"`
 
 ### App Bring-Up (API + Streamlit only)
 
@@ -87,7 +87,7 @@ This checklist tracks exactly what has been completed so far and what is still p
 - [ ] `curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501`
 
 6. Verify public access
-- [ ] Open `http://98.89.240.117:8501`
+- [ ] Open `http://34.197.15.20:8501`
 
 ### Security Cleanup (After service is stable)
 
@@ -111,10 +111,10 @@ This checklist tracks exactly what has been completed so far and what is still p
 
 ```bash
 # 1) Reboot
-aws ec2 reboot-instances --region us-east-1 --instance-ids i-060fd87cd3071438d
+aws ec2 reboot-instances --region us-east-1 --instance-ids i-0f8cf5fb0b2591208
 
 # 2) SSH test
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@98.89.240.117 "echo connected && uptime"
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@34.197.15.20 "echo connected && uptime"
 
 # 3) App start (on EC2)
 cd ~/utility-billing-ai

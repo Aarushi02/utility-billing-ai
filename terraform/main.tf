@@ -54,11 +54,11 @@ resource "aws_security_group" "app" {
   }
 
   ingress {
-    description = "Streamlit UI"
-    from_port   = 8501
-    to_port     = 8501
+    description = "HTTP via Nginx"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = var.streamlit_allowed_cidrs
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   # Intentionally no ingress rules for 8000 (API) and 8080 (Airflow).
