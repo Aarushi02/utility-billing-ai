@@ -37,6 +37,8 @@ services:
       - "8501:8501"
 
   airflow:
+    profiles:
+      - airflow
     image: apache/airflow:3.0.0
     container_name: utility-airflow
     restart: unless-stopped
