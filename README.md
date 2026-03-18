@@ -1,6 +1,6 @@
 # 🏢 The Agentic Auditor - Utility Billing AI ⚡📄💰
 
-**An intelligent, multi-agent AI system for automating utility bill auditing, tariff analysis, and overcharge detection.**
+**An intelligent, LLM-integrated AI pipeline for automating utility bill auditing, tariff analysis, and overcharge detection.**
 
 ![Python](https://img.shields.io/badge/Python-3.10%2B-blue) ![Streamlit](https://img.shields.io/badge/Frontend-Streamlit-red) ![Airflow](https://img.shields.io/badge/Orchestration-Airflow-green) ![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-336791) ![AWS](https://img.shields.io/badge/Cloud-AWS-FF9900) ![Docker](https://img.shields.io/badge/Container-Docker-2496ED)
 
@@ -17,7 +17,7 @@ Commercial utility bills are complex documents with multiple rate tiers, surchar
 - ✅ Detects discrepancies and overcharges with precision
 - ✅ Generates comprehensive audit reports
 
-This system leverages a **Multi-Agent Architecture** with **LLM-powered intelligent components** orchestrated by **Apache Airflow**, making it enterprise-ready and scalable.
+This system leverages a **Modular AI Pipeline** with **LLM-integrated processing modules** orchestrated by **Apache Airflow**, making it enterprise-ready and scalable.
 
 ---
 
@@ -62,35 +62,35 @@ This system leverages a **Multi-Agent Architecture** with **LLM-powered intellig
 └─────────────────────┬──────────────────────────────────┘
                       │
 ┌─────────────────────v──────────────────────────────────┐
-│    AGENTIC CORE (Multi-Agent System)                    │
+│    AI PROCESSING PIPELINE (Specialized Modules)         │
 │                                                         │
-│  1️⃣  Document Processor Agent                           │
+│  1️⃣  Document Processor Module                          │
 │      └─ PDF text extraction (pdfplumber)                │
 │      └─ Table extraction (camelot)                      │
-│      └─ Data validation                                 │
+│      └─ Data cleaning & normalisation                   │
 │                                                         │
-│  2️⃣  Tariff Analyzer Agent                              │
+│  2️⃣  Tariff Analyzer Module                             │
 │      └─ Parse Service Classification (SC) documents     │
 │      └─ Extract rate structures                         │
 │      └─ Group tariffs by service class                  │
 │                                                         │
-│  3️⃣  Logic Extractor Agent (LLM)                        │
-│      └─ OpenAI GPT-4o-mini analysis                     │
-│      └─ Understanding billing rules                     │
-│      └─ Structured rule output                          │
+│  3️⃣  Logic Extractor Module  🤖 LLM API Call            │
+│      └─ OpenAI GPT-4o-mini API call                     │
+│      └─ Interprets tariff text → structured rules       │
+│      └─ Returns JSON with tier thresholds & rates       │
 │                                                         │
-│  4️⃣  Bill Validator Agent                               │
-│      └─ Compare calculated vs actual charges            │
-│      └─ Detect overcharges                              │
-│      └─ Threshold-based anomaly detection               │
+│  4️⃣  Audit Calculation Module                           │
+│      └─ Rule-based arithmetic engine                    │
+│      └─ Computes expected charge from tariff rules      │
+│      └─ Compares calculated vs actual charges           │
 │                                                         │
-│  5️⃣  Error Detector Agent                               │
-│      └─ Validate data completeness                      │
-│      └─ Flag missing/invalid fields                     │
-│      └─ Consistency checks                              │
+│  5️⃣  Anomaly Detector Module  🤖 LLM API Call           │
+│      └─ OpenAI GPT-4o-mini API call                     │
+│      └─ Explains discrepancies in plain English         │
+│      └─ Flags overcharges with threshold detection      │
 │                                                         │
-│  6️⃣  Report Generator Agent                             │
-│      └─ Create audit reports                            │
+│  6️⃣  Report Generator Module                            │
+│      └─ Builds audit reports from validation results    │
 │      └─ Export to PDF/CSV                               │
 │      └─ Summary statistics                              │
 └─────────────────────┬──────────────────────────────────┘
@@ -198,7 +198,7 @@ utility-billing-ai/
 │       └── workflow_*                     # Additional workflow components
 │
 ├── 🤖 src/                                # Core Application Logic
-│   ├── agents/                            # Multi-Agent System (6 Agents)
+│   ├── agents/                            # AI Processing Pipeline (6 Modules)
 │   │   ├── document_processor_agent/      # PDF Extraction & Parsing
 │   │   │   └── utility_bill_doc_processor.py
 │   │   ├── tariff_analysis_agent/         # Tariff Rule Extraction
@@ -255,9 +255,12 @@ utility-billing-ai/
 │   └── output/                            # Generated outputs
 │
 ├── 📚 documentation/                      # Project architecture and guides
-│   ├── ARCHITECTURE.md
-│   ├── DEPLOYMENT.md
-│   └── PROJECT_OVERVIEW.md
+│   ├── ARCHITECTURE.md                    # System architecture design
+│   ├── DEPLOYMENT.md                      # Local deployment guide
+│   ├── PROJECT_OVERVIEW.md                # Project scope and goals
+│   ├── AWS_REUSE_SETUP_RUNBOOK.md         # Primary cloud setup runbook
+│   ├── TERRAFORM_INFRA_GUIDE.md           # Terraform infrastructure reference
+│   └── DEPLOYMENT_PROGRESS_CHECKLIST.md   # Active deployment tracker
 │
 └── ▶️ run_local_stack.sh                  # Local API + Streamlit launcher
 ```
@@ -298,10 +301,10 @@ See [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) for d
 
 | Feature | Description | Benefits |
 |---------|-------------|----------|
-| **📄 Automated PDF Extraction** | AI-powered extraction of bill data from PDFs | Eliminates manual data entry |
-| **⚖️ Tariff Rule Engine** | Intelligent parsing of rate structures | Understands complex billing logic |
-| **🔍 Overcharge Detection** | Calculates expected vs actual charges | Identifies billing errors automatically |
-| **🧠 LLM-Powered Analysis** | Uses OpenAI GPT for intelligent processing | Handles complex, unstructured data |
+| **📄 Automated PDF Extraction** | PDF parsing with `pdfplumber` + `camelot` | Eliminates manual data entry |
+| **⚖️ Tariff Rule Engine** | Rule-based parsing of rate structures | Understands complex billing logic |
+| **🔍 Overcharge Detection** | Arithmetic engine: calculated vs actual charges | Identifies billing errors automatically |
+| **🧠 LLM API Integration** | OpenAI GPT-4o-mini for tariff parsing & anomaly explanation | Handles complex, unstructured tariff text |
 | **📊 Interactive Dashboard** | Streamlit UI with responsive design | Easy-to-use interface |
 | **⚡ Airflow Orchestration** | Robust DAG-based pipeline | Scalable, reliable workflow management |
 | **💾 PostgreSQL Database** | Persistent data storage | Reliable, queryable data |
@@ -316,27 +319,35 @@ See [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) for d
 | Layer | Technology |
 |-------|-----------|
 | **Frontend** | Streamlit |
+| **Backend API** | FastAPI |
 | **Orchestration** | Apache Airflow 3.1 |
 | **LLM** | OpenAI API (GPT-4o-mini) |
-| **Database** | PostgreSQL (AWS RDS) |
+| **Database** | PostgreSQL |
 | **File Storage** | AWS S3 |
 | **PDF Processing** | pdfplumber, camelot |
 | **Containerization** | Docker & Docker Compose |
+| **Cloud Infra** | AWS EC2 + Terraform |
+| **CI/CD** | GitHub Actions |
 | **Authentication** | JWT Tokens |
 
 ---
 
 ## 📋 Quick Start
 
-### **With Docker**
+### **With Docker (Local)**
 ```bash
 git clone https://github.com/harshalsp0011/utility-billing-ai.git
 cd utility-billing-ai
 cp .env.example .env
 # Edit .env with your AWS & OpenAI credentials
-docker-compose up -d
+docker compose up -d --build api streamlit
 # Access: http://localhost:8501
 ```
+
+### **Production (AWS EC2 — already deployed)**
+- Public URL: `http://98.89.240.117:8501`
+- Infra provisioned via Terraform (`terraform/`)
+- See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for full setup guide
 
 ### **Local Development**
 ```bash
@@ -351,37 +362,356 @@ streamlit run app/streamlit_app.py
 
 ## 📚 Documentation
 
-- **[documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md)** - Project purpose and scope
-- **[documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md)** - System architecture and component design
-- **[documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md)** - Local and AWS deployment guide
-- **[Airflow Documentation](https://airflow.apache.org/)**
-- **[Streamlit Docs](https://docs.streamlit.io/)**
-- **[OpenAI API](https://platform.openai.com/docs)**
+| File | Purpose |
+|------|--------|
+| [documentation/PROJECT_OVERVIEW.md](documentation/PROJECT_OVERVIEW.md) | Project purpose, scope, and goals |
+| [documentation/ARCHITECTURE.md](documentation/ARCHITECTURE.md) | System architecture and component design |
+| [documentation/DEPLOYMENT.md](documentation/DEPLOYMENT.md) | Local development deployment guide |
+| [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) | **Primary cloud setup guide** — Terraform + EC2 + Docker deploy |
+| [documentation/TERRAFORM_INFRA_GUIDE.md](documentation/TERRAFORM_INFRA_GUIDE.md) | Terraform infrastructure reference |
+| [documentation/DEPLOYMENT_PROGRESS_CHECKLIST.md](documentation/DEPLOYMENT_PROGRESS_CHECKLIST.md) | Current deployment progress and pending steps |
+| [terraform/README.md](terraform/README.md) | Terraform folder file-by-file breakdown |
 
 ---
 
 ## 🎓 Project Status
 
-✅ **Production Ready**
+✅ **Production Ready — Deployed on AWS**
 - Core extraction pipeline working
 - Tariff rule parsing with LLM
-- Airflow orchestration (3-task DAG)
+- Airflow orchestration (3-task DAG) — optional, disabled in default deploy
 - PostgreSQL database setup
 - Streamlit UI (6 pages)
 - AWS S3 integration
 - Authentication system
-- Multi-agent architecture
+- Modular AI processing pipeline (6 specialised modules)
+- FastAPI backend (REST API layer)
+- AWS EC2 provisioned via Terraform (`t3.micro`, `us-east-1`)
+- GitHub Actions CI/CD — auto-deploys on merge to `main`
+
+---
+
+## ⚙️ CI/CD — Auto Deploy on Merge to `main`
+
+The workflow file at [.github/workflows/deploy.yml](.github/workflows/deploy.yml) automatically deploys to EC2 every time you merge `dev` → `main`.
+
+### How it works
+
+```
+dev branch  ──► pull request ──► merge to main
+                                      │
+                                      ▼
+                            GitHub Actions triggers
+                                      │
+                                      ▼
+                            SSH into EC2 (98.89.240.117)
+                                      │
+                                      ▼
+                      git fetch + git reset --hard origin/main
+                                      │
+                                      ▼
+                  docker compose up -d --build api streamlit
+```
+
+### One-time GitHub setup (required before first auto-deploy)
+
+Go to your repo → **Settings → Secrets and variables → Actions → New repository secret** and add these three secrets:
+
+| Secret Name | Value |
+|-------------|-------|
+| `EC2_HOST` | `98.89.240.117` |
+| `EC2_USER` | `ubuntu` |
+| `EC2_SSH_KEY` | Full contents of `~/Desktop/utility-billing-key.pem` |
+
+### What about `.env`?
+
+`.env` is **gitignored** — `git pull` never touches it. It stays on the EC2 server permanently after you copied it there once via `scp`. You only need to update it on the server if you rotate API keys.
+
+### Workflow
+
+| Branch | Purpose | Auto-deploy? |
+|--------|---------|-------------|
+| `dev` | Development, testing | ❌ No |
+| `main` | Production code | ✅ Yes, on every push/merge |
+
+---
+
+## � Docker & Container Architecture
+
+The entire application stack is containerised with **Docker** and orchestrated using **Docker Compose**. This means every service runs inside an isolated, reproducible container — no dependency conflicts, identical behaviour on any machine.
+
+### **Container Services**
+
+| Service | Build Source | Exposed Port | Purpose |
+|---------|-------------|-------------|---------|
+| `api` | `Dockerfile.api` | `127.0.0.1:8000` (local only) | FastAPI backend — all AI logic & DB calls |
+| `streamlit` | `app/Dockerfile` | `8501` (public) | Streamlit frontend — user-facing dashboard |
+| `airflow` | `airflow/Dockerfile` | `127.0.0.1:8080` (local only) | Apache Airflow — DAG scheduler & executor |
+| `db` | `postgres:15` | `5432` (internal network only) | PostgreSQL — persistent structured data |
+
+### **Docker Compose Files**
+
+| File | When to Use |
+|------|------------|
+| `docker-compose.yml` | Base config — services, networks, volumes, health-checks |
+| `docker-compose.prod.yml` | Production override — binds API/Airflow to `127.0.0.1` so they are not internet-reachable |
+
+Run locally (both services):
+```bash
+docker compose up -d --build api streamlit
+```
+
+Run with production port binding:
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+```
+
+### **Container Networking**
+
+All containers share an internal Docker bridge network. The Streamlit container calls the FastAPI container via `http://api:8000` — the Docker service name `api` resolves automatically inside the network. Neither `api` nor `airflow` are reachable from outside EC2.
+
+```
+Internet ──► EC2:8501 ──► streamlit container
+                               │  http://api:8000
+                               ▼
+                           api container
+                               │  postgres://db:5432
+                               ▼
+                           db container (PostgreSQL)
+```
+
+### **Volumes & Persistent State**
+
+| Volume | Mounted Path | Holds |
+|--------|-------------|-------|
+| `postgres_data` | `/var/lib/postgresql/data` | All DB records survive container restarts |
+| `./data` | `/app/data` | Uploaded PDFs, raw extracts, processed JSON |
+| `./airflow/logs` | `/opt/airflow/logs` | Airflow task execution logs |
+
+### **Environment Variables (`.env`)**
+
+`.env` is **never committed to git**. Copy the template and fill in real secrets:
+
+```bash
+cp .env.example .env
+# Edit .env with real values
+```
+
+Key variables:
+
+| Variable | Purpose |
+|----------|---------|
+| `OPENAI_API_KEY` | OpenAI GPT-4o-mini access |
+| `DATABASE_URL` | PostgreSQL connection string |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | S3 access (local only — EC2 uses IAM role) |
+| `AWS_S3_BUCKET_NAME` | Target S3 bucket name |
+| `SECRET_KEY` | JWT token signing secret |
+| `AIRFLOW_ADMIN_PASSWORD` | Airflow UI login password |
+
+---
+
+## ☁️ AWS Infrastructure
+
+The production stack runs on **AWS** using a cost-effective single-VM design. No load balancers, no ECS, no NAT gateways — just the minimum required to run a reliable production service.
+
+### **AWS Services Used**
+
+| Service | Role in This Project |
+|---------|---------------------|
+| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers |
+| **Elastic IP** | Static public IP (`98.89.240.117`) — survives EC2 reboots |
+| **IAM Role + Instance Profile** | Grants EC2 permission to read/write S3 — no hard-coded AWS keys on server |
+| **S3 Bucket** | Stores uploaded bill PDFs, tariff JSONs, and generated audit reports |
+| **Security Group** | Firewall — only ports `22` (SSH, your IP only) and `8501` (Streamlit, public) are open |
+
+### **Security Group Rules**
+
+| Port | Protocol | Source | Reason |
+|------|----------|--------|--------|
+| `22` | TCP | Your IP only | SSH admin access |
+| `8501` | TCP | `0.0.0.0/0` | Streamlit public access |
+| `8000` | — | ❌ Blocked | FastAPI internal only |
+| `8080` | — | ❌ Blocked | Airflow internal only |
+
+### **IAM Role — How EC2 Accesses S3 Without Keys**
+
+The EC2 instance has an attached **IAM Instance Profile**. The attached role grants `s3:GetObject`, `s3:PutObject`, `s3:DeleteObject`, and `s3:ListBucket` on the project S3 bucket. Benefits:
+- No AWS credentials stored in `.env` on the server
+- The application gains S3 access automatically via AWS instance metadata service (IMDS)
+- Rotating access: update the IAM policy — no server changes required
+
+### **S3 Bucket Structure**
+
+```
+s3://<bucket-name>/
+├── uploads/           # Raw bill PDFs uploaded by users
+├── tariffs/           # Uploaded tariff PDF documents
+├── processed/         # Extracted JSON artifacts
+│   ├── raw_extracted_tariff.json
+│   ├── grouped_tariffs.json
+│   └── final_logic_output.json
+└── reports/           # Generated audit reports (PDF / CSV)
+```
+
+### **Full AWS Architecture**
+
+```
+Your Browser
+    │
+    ▼ port 8501 (public)
+EC2 Instance  ──  Elastic IP: 98.89.240.117
+│  AMI: Ubuntu 22.04, t3.micro, us-east-1
+│  Security Group: 22 (your IP), 8501 (public)
+│  IAM Role ──► S3 read/write (no stored keys)
+│
+└── Docker Compose Stack
+    ├── streamlit   :8501  (public)
+    ├── api         :8000  (internal)
+    ├── airflow     :8080  (internal)
+    └── postgres    :5432  (internal)
+
+AWS S3 Bucket
+└── PDFs, JSONs, reports
+```
+
+See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for the full step-by-step setup guide.
+
+---
+
+## 🔧 Terraform — Infrastructure as Code
+
+All AWS resources are defined as **Terraform code** in the `terraform/` directory. This means the entire cloud environment is version-controlled, peer-reviewable, and fully reproducible — you can recreate it in any AWS account by changing a few variable values.
+
+### **Resources Managed by Terraform**
+
+| Terraform Resource | AWS Service | Purpose |
+|-------------------|-------------|---------|
+| `aws_instance` | EC2 | Application server (`t3.micro`) |
+| `aws_security_group` | Security Group | Firewall — SSH + Streamlit rules |
+| `aws_eip` + `aws_eip_association` | Elastic IP | Static public IP bound to EC2 |
+| `aws_iam_role` | IAM | EC2 service identity |
+| `aws_iam_instance_profile` | IAM | Attaches role to EC2 |
+| `aws_iam_role_policy` | IAM | S3 access permissions inline policy |
+
+### **Terraform File Map**
+
+| File | Purpose |
+|------|---------|
+| `terraform/main.tf` | All resource definitions |
+| `terraform/variables.tf` | Input variable declarations with types and defaults |
+| `terraform/terraform.tfvars` | Your actual environment values (gitignored) |
+| `terraform/terraform.tfvars.example` | Safe template to copy |
+| `terraform/outputs.tf` | Prints EC2 IP, instance ID, SSH command after apply |
+| `terraform/versions.tf` | Required provider + Terraform version pins |
+| `terraform/scripts/` | EC2 `user_data` bootstrap template (Docker install) |
+
+### **Key Variables to Fill In**
+
+```hcl
+# terraform/terraform.tfvars  (copy from terraform.tfvars.example)
+aws_region              = "us-east-1"
+ssh_key_name            = "utility-billing-key"
+ssh_allowed_cidr        = "YOUR_PUBLIC_IP/32"   # curl https://checkip.amazonaws.com
+existing_s3_bucket_name = "your-bucket-name"
+instance_type           = "t3.micro"
+```
+
+### **Terraform Command Workflow**
+
+```bash
+# One-time: install tools
+brew install awscli terraform
+
+# Authenticate to AWS
+aws configure                  # enter Access Key, Secret, region (us-east-1), json
+aws sts get-caller-identity    # verify — should return your account ARN
+
+# Infrastructure lifecycle
+cd terraform
+terraform init                 # download AWS provider plugin (run once per machine)
+terraform plan                 # preview changes — safe, no resources created yet
+terraform apply                # create/update infrastructure in AWS
+terraform destroy              # tear down everything (use with caution!)
+```
+
+> **Idempotent**: Running `terraform apply` multiple times is safe — Terraform only changes what differs from current real state.
+
+> **State file**: `terraform.tfstate` is gitignored. It maps Terraform config to real AWS resource IDs. For team use, migrate state to an S3 backend.
+
+See [documentation/TERRAFORM_INFRA_GUIDE.md](documentation/TERRAFORM_INFRA_GUIDE.md) for the full infrastructure reference.
+
+---
+
+## 🧠 LLM API Integration
+
+This project makes **direct OpenAI GPT-4o-mini API calls** at two specific pipeline steps — tariff rule extraction and anomaly explanation. The remaining 4 modules are rule-based Python with no LLM involvement.
+
+### **Where LLM API Calls Are Made**
+
+| Module | File | LLM Task |
+|--------|------|---------|
+| **Tariff Analysis Module** | `extract_logic_llm_call.py` | Single API call: reads grouped tariff text → returns structured billing rules (tier thresholds, multipliers, conditions) as JSON |
+| **Anomaly Detector Module** | `anomaly_detector_llm_call.py` | Single API call: analyses charge discrepancy → returns plain-English explanation of the overcharge cause |
+
+### **LLM Client (`src/utils/llm_client.py`)**
+
+All LLM API calls go through a single shared client that handles:
+- OpenAI Python SDK initialisation (`OPENAI_API_KEY` from `.env`)
+- Model selection — `gpt-4o-mini` by default (cost-efficient)
+- `max_tokens` and `temperature` configured per call type
+- Error handling and retry logic for transient API failures
+
+```python
+# Usage pattern in pipeline modules
+from src.utils.llm_client import LLMClient
+
+client = LLMClient(api_key=OPENAI_API_KEY, model=OPENAI_MODEL)
+response = client.call(
+    system_prompt="You are a utility billing expert...",
+    user_prompt=raw_tariff_text,
+    response_format="json"
+)
+```
+
+> **Important**: Each LLM-integrated module makes a single, one-shot API call per input. There is no autonomous reasoning loop, no tool use by the LLM, and no inter-module communication driven by the LLM. The LLM is used purely as a **smart text parser** at two fixed pipeline steps.
+
+### **Prompt Engineering Strategy**
+
+| Principle | How Applied |
+|-----------|------------|
+| **Domain system role** | Each agent sets a specific system prompt (e.g. "You are a utility tariff analyst specialising in rate structures") |
+| **Structured JSON output** | Prompts explicitly request JSON matching a defined schema — makes LLM output directly parseable |
+| **Context injection** | Raw PDF-extracted text or tariff JSON is passed as the user message for each call |
+| **Temperature = 0** | Used for calculation-critical extraction tasks to get deterministic output |
+| **Slight temperature** | Used for anomaly explanation summaries to allow natural phrasing |
+| **Few-shot examples** | Tariff extraction prompts include annotated input → output examples to guide the model |
+
+### **Model Choice: GPT-4o-mini**
+
+| Factor | Reasoning |
+|--------|-----------|
+| **Cost** | ~15× cheaper than `gpt-4o` per token — critical for per-bill processing economics |
+| **Accuracy** | Sufficient for structured extraction from well-formed tariff text |
+| **Speed** | Faster latency — important for interactive audit workflows |
+| **Upgrade path** | Change one variable in `llm_client.py` to switch to `gpt-4o` or any future model |
+
+### **API Key Security**
+
+- `OPENAI_API_KEY` stored only in `.env` — never hard-coded, never committed to git
+- Loaded via `python-dotenv` at runtime
+- On the EC2 server, `.env` is placed once via `scp` — CI/CD never touches it
+- AWS S3 access uses IAM role on EC2 — no AWS keys stored on the server at all
 
 ---
 
 ## 📞 Support
 
-- 📧 Email: support@agentic-auditor.com
+- 📧 Email: harshal.sanjivpatil2000@gmail.com
 - 🐙 GitHub: [harshalsp0011/utility-billing-ai](https://github.com/harshalsp0011/utility-billing-ai)
 
 ---
 
-**Last Updated**: December 7, 2025 | **Version**: 1.0.0 | **Status**: ✅ Production Ready
+**Last Updated**: March 13, 2026 | **Version**: 1.2.0 | **Status**: ✅ Production Ready — AWS EC2 Live
 
 <div align="center">
 

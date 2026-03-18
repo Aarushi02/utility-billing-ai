@@ -1,0 +1,40 @@
+name: Deploy to Production
+
+# Triggers on every push/merge to main branch.
+# This is your prod deployment — dev branch is not affected.
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    name: SSH Deploy to EC2
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          # How it works:
+          # 1. SSH into EC2
+          # 2. git pull gets the latest main branch code
+          # 3. docker compose rebuilds only changed images and restarts services
+          # .env is NOT in git — it stays on EC2 untouched by git pull
+          script: |
+            set -e
+            cd ~/utility-billing-ai
+
+            echo "==> Pulling latest code from main..."
+            git fetch origin
+            git reset --hard origin/main
+
+            echo "==> Rebuilding and restarting containers..."
+            docker compose up -d --build api streamlit
+
+            echo "==> Deployment complete. Container status:"
+            docker compose ps
