@@ -166,6 +166,27 @@ utility-billing-ai-nginx-1    nginx:alpine                   Up              0.0
 
 ---
 
+### 10. EC2 Auto Scheduler (Office Hours Start/Stop)
+- [x] `terraform/scheduler.tf` created — all scheduler resources defined as Terraform code
+- [x] Lambda `utility-billing-ai-prod-ec2-start` — Python 3.12, starts EC2 instance
+- [x] Lambda `utility-billing-ai-prod-ec2-stop` — Python 3.12, stops EC2 instance
+- [x] EventBridge rule: **Start** — `cron(0 14 ? * MON-FRI *)` = **9:00 AM EST Mon–Fri**
+- [x] EventBridge rule: **Stop** — `cron(0 23 ? * MON-FRI *)` = **6:00 PM EST Mon–Fri**
+- [x] IAM role for Lambda with least-privilege (only this EC2, only start/stop)
+- [x] `terraform apply` successful — 8 resources created
+- [x] Scheduler status output: `ENABLED — Start: cron(0 14 ? * MON-FRI *) | Stop: cron(0 23 ? * MON-FRI *) (UTC)`
+
+**Cost saving:** ~$2–3/month (office hours) vs ~$8/month (24/7 running)
+
+| Control | Command |
+|---------|---------|
+| Pause | `aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start` (+ stop rule) |
+| Resume | `aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start` (+ stop rule) |
+| Remove | Set `enable_ec2_scheduler = false` in `terraform.tfvars` → `terraform apply` |
+| Change time | Edit `ec2_start_cron_utc` / `ec2_stop_cron_utc` in `terraform.tfvars` → `terraform apply` |
+
+---
+
 ## ⏳ REMAINING / PENDING
 
 ### Phase 2 — HTTPS / SSL / Domain *(Next step after current deploy is stable)*

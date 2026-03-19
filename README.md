@@ -522,11 +522,13 @@ The production stack runs on **AWS** using a cost-effective single-VM design. No
 
 | Service | Role in This Project |
 |---------|---------------------|
-| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers (with 2GB swap) |
-| **Elastic IP** | Static public IP — survives EC2 reboots (changes on destroy+recreate) |
+| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers (with 2GB swap auto-configured) |
+| **Elastic IP** | Static public IP — survives EC2 stop/start (changes only on destroy+recreate) |
 | **IAM Role + Instance Profile** | Grants EC2 permission to read/write S3 — no hard-coded AWS keys on server |
 | **S3 Bucket** | Stores uploaded bill PDFs, tariff JSONs, and generated audit reports |
 | **Security Group** | Firewall — only ports `22` (SSH, your IP only) and `80` (Nginx, public) are open |
+| **Lambda** (x2) | Tiny Python functions: one starts EC2, one stops EC2 — triggered by EventBridge |
+| **EventBridge** (x2) | Cron scheduler — fires at 9 AM and 6 PM EST Mon–Fri to start/stop EC2 |
 
 ### **Security Group Rules**
 
@@ -561,24 +563,51 @@ s3://<bucket-name>/
 ### **Full AWS Architecture**
 
 ```
-Your Browser
-    │
-    ▼ port 80 (public via Nginx)
-EC2 Instance  ──  Elastic IP: 52.2.3.30
-│  AMI: Ubuntu 24.04, t3.micro, us-east-1
-│  2GB Swap (auto-configured via bootstrap)
-│  Security Group: 22 (your IP), 80 (public)
-│  IAM Role ──► S3 read/write (no stored keys)
-│
-└── Docker Compose Stack
-    ├── nginx       :80    (public — reverse proxy)
-    ├── streamlit   :8501  (internal only — via Nginx)
-    ├── api         :8000  (internal only)
-    ├── airflow     :8080  (disabled by default)
-    └── postgres    :5432  (internal)
+┌─────────────────────────────────────────────────────────────────┐
+│                        INTERNET                                  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP port 80 (public)
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           EC2 Instance  ──  Elastic IP: 52.2.3.30               │
+│           AMI: Ubuntu 24.04 LTS  |  t3.micro  |  us-east-1      │
+│           Disk: 20GB gp3  |  RAM: 1GB  |  Swap: 2GB             │
+│           Security Group: port 22 (your IP) + port 80 (public)  │
+│           IAM Role ──► S3 read/write (no stored credentials)     │
+│                                                                  │
+│  ┌─────────────────── Docker Compose Stack ──────────────────┐  │
+│  │                                                            │  │
+│  │  [nginx :80]  ◄── Only public entry point                 │  │
+│  │       │  proxy_pass http://streamlit:8501                  │  │
+│  │       ▼                                                    │  │
+│  │  [streamlit :8501]  ◄── Internal Docker network only       │  │
+│  │       │  http://api:8000                                   │  │
+│  │       ▼                                                    │  │
+│  │  [api :8000]  ◄── Internal only (127.0.0.1 bound)         │  │
+│  │                                                            │  │
+│  │  [airflow :8080]  ◄── Disabled by default (profile-gated) │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  IAM Role ─────────────────────────────────────────────────────► │
+└──────────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    AWS S3 Bucket                                  │
+│  uploads/   tariffs/   processed/   reports/                     │
+└─────────────────────────────────────────────────────────────────┘
 
-AWS S3 Bucket
-└── PDFs, JSONs, reports
+┌─────────────────────────────────────────────────────────────────┐
+│              EC2 AUTO SCHEDULER (Weekdays only)                  │
+│                                                                  │
+│  EventBridge cron ──► Lambda (ec2-start)                         │
+│  "cron(0 14 ? * MON-FRI *)"  =  9:00 AM EST  ──► StartInstances │
+│                                                                  │
+│  EventBridge cron ──► Lambda (ec2-stop)                          │
+│  "cron(0 23 ? * MON-FRI *)"  =  6:00 PM EST  ──► StopInstances  │
+│                                                                  │
+│  Cost saving: ~$2-3/month vs ~$8/month running 24/7              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for the full step-by-step setup guide.
@@ -594,23 +623,28 @@ All AWS resources are defined as **Terraform code** in the `terraform/` director
 | Terraform Resource | AWS Service | Purpose |
 |-------------------|-------------|---------|
 | `aws_instance` | EC2 | Application server (`t3.micro`) |
-| `aws_security_group` | Security Group | Firewall — SSH + Streamlit rules |
-| `aws_eip` + `aws_eip_association` | Elastic IP | Static public IP bound to EC2 |
+| `aws_security_group` | Security Group | Firewall — SSH (your IP) + HTTP port 80 |
+| `aws_eip` | Elastic IP | Static public IP bound to EC2 |
 | `aws_iam_role` | IAM | EC2 service identity |
 | `aws_iam_instance_profile` | IAM | Attaches role to EC2 |
 | `aws_iam_role_policy` | IAM | S3 access permissions inline policy |
+| `aws_lambda_function` (x2) | Lambda | Start + Stop EC2 functions (Python 3.12) |
+| `aws_cloudwatch_event_rule` (x2) | EventBridge | Cron rules for 9 AM start + 6 PM stop |
+| `aws_cloudwatch_event_target` (x2) | EventBridge | Connects cron rules to Lambda functions |
+| `aws_iam_role` (scheduler) | IAM | Lambda execution role (EC2 start/stop only) |
 
 ### **Terraform File Map**
 
 | File | Purpose |
 |------|---------|
-| `terraform/main.tf` | All resource definitions |
-| `terraform/variables.tf` | Input variable declarations with types and defaults |
-| `terraform/terraform.tfvars` | Your actual environment values (gitignored) |
-| `terraform/terraform.tfvars.example` | Safe template to copy |
-| `terraform/outputs.tf` | Prints EC2 IP, instance ID, SSH command after apply |
+| `terraform/main.tf` | Core resources — EC2, SG, EIP, IAM |
+| `terraform/scheduler.tf` | EC2 auto start/stop — Lambda + EventBridge crons |
+| `terraform/variables.tf` | All input variable declarations with types and defaults |
+| `terraform/terraform.tfvars` | Your actual values (gitignored — never commit) |
+| `terraform/terraform.tfvars.example` | Safe template to copy for new environments |
+| `terraform/outputs.tf` | Prints EC2 IP, instance ID, SSH command, scheduler status |
 | `terraform/versions.tf` | Required provider + Terraform version pins |
-| `terraform/scripts/` | EC2 `user_data` bootstrap template (Docker install) |
+| `terraform/scripts/bootstrap_docker.sh.tftpl` | EC2 first-boot: 2GB swap + Docker CE install |
 
 ### **Key Variables to Fill In**
 
@@ -711,6 +745,194 @@ response = client.call(
 
 ---
 
+## ⏰ EC2 Auto Scheduler — Start/Stop on Office Hours
+
+The EC2 instance automatically starts every weekday morning and stops every evening. No manual intervention needed. Saves ~65% on EC2 costs vs running 24/7.
+
+### **How It Works**
+
+```
+Every Monday → Friday:
+
+  9:00 AM EST  ──► EventBridge fires
+                       └── Lambda (ec2-start) runs
+                               └── AWS EC2 API: StartInstances
+                                       └── EC2 boots up (~60 sec)
+                                               └── Docker auto-starts containers
+                                                       └── App live at http://52.2.3.30
+
+  6:00 PM EST  ──► EventBridge fires
+                       └── Lambda (ec2-stop) runs
+                               └── AWS EC2 API: StopInstances
+                                       └── EC2 stops (IP kept, disk kept)
+                                               └── Everything saved, nothing lost
+```
+
+### **What Happens to the App When EC2 Stops**
+
+| Item | When Stopped | When Started Again |
+|------|-------------|-------------------|
+| EC2 Instance | Stopped (not terminated) | Starts fresh |
+| Elastic IP (`52.2.3.30`) | **Kept** — IP reserved for you | **Same IP** |
+| Disk / files / repo / `.env` | **Kept** — disk preserved | **Same files** |
+| Docker containers | Stopped gracefully | **Auto-restart** (`restart: unless-stopped`) |
+| Database data | **Kept** — lives on disk | **Same data** |
+| App URL | Offline | Back at `http://52.2.3.30` |
+
+### **Cost Comparison**
+
+| Scenario | Hours/month | Approx Cost |
+|----------|-------------|-------------|
+| 24/7 running | 720 hrs | ~$8/month |
+| Office hours only (9AM–6PM, Mon–Fri) | ~195 hrs | ~$2–3/month |
+| **Saving** | | **~$5–6/month (~65% cheaper)** |
+
+> Elastic IP costs ~$0.005/hr when EC2 is stopped — about $0.70/month. Still much cheaper than running 24/7.
+
+### **Schedule Configuration**
+
+Cron times are in **UTC**. Current settings (in `terraform/scheduler.tf`):
+
+| Event | Cron (UTC) | Local Time (EST) | Local Time (EDT) |
+|-------|-----------|-----------------|-----------------|
+| **Start** | `cron(0 14 ? * MON-FRI *)` | 9:00 AM EST | 10:00 AM EDT |
+| **Stop** | `cron(0 23 ? * MON-FRI *)` | 6:00 PM EST | 7:00 PM EDT |
+
+> **Note:** EST = UTC-5 (Nov–Mar) / EDT = UTC-4 (Mar–Nov). Adjust cron in `terraform.tfvars` when clocks change.
+
+### **How to Control the Scheduler**
+
+**Pause (keep rules but disable — no firing):**
+```bash
+aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
+aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
+```
+
+**Resume (re-enable):**
+```bash
+aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
+aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
+```
+
+**Change schedule (e.g. 8 AM start instead of 9 AM):**
+```hcl
+# In terraform/terraform.tfvars:
+ec2_start_cron_utc = "cron(0 13 ? * MON-FRI *)"   # 8 AM EST
+ec2_stop_cron_utc  = "cron(0 23 ? * MON-FRI *)"   # 6 PM EST
+```
+Then: `cd terraform && terraform apply`
+
+**Remove scheduler entirely:**
+```hcl
+# In terraform/terraform.tfvars:
+enable_ec2_scheduler = false
+```
+Then: `cd terraform && terraform apply`
+
+**Manual override (start/stop anytime regardless of schedule):**
+```bash
+# Start now
+aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+
+# Stop now
+aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+```
+
+---
+
+## 🗂️ Operations Cheatsheet
+
+### EC2 Instance Control
+
+```bash
+# ── Start EC2 manually ───────────────────────────────────────────────────────
+aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+
+# ── Stop EC2 manually ────────────────────────────────────────────────────────
+aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+
+# ── Check EC2 state ──────────────────────────────────────────────────────────
+aws ec2 describe-instances \
+  --region us-east-1 \
+  --instance-ids i-06ebc19f707862bdd \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text
+
+# ── Get current public IP ────────────────────────────────────────────────────
+aws ec2 describe-instances \
+  --region us-east-1 \
+  --instance-ids i-06ebc19f707862bdd \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text
+```
+
+### SSH & Docker
+
+```bash
+# ── SSH into EC2 ─────────────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30
+
+# ── Check all containers are running ─────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+  "cd ~/utility-billing-ai && docker compose ps"
+
+# ── Start all services (if containers stopped) ───────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+  "cd ~/utility-billing-ai && \
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+   up -d api streamlit nginx"
+
+# ── View live logs ────────────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+  "cd ~/utility-billing-ai && docker compose logs -f --tail=50"
+
+# ── API health check ──────────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+  "curl -sS http://127.0.0.1:8000/api/v1/health/live"
+
+# ── Check memory and swap ─────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 "free -h"
+```
+
+### Scheduler Control
+
+```bash
+# ── Pause scheduler (EC2 will NOT auto start/stop) ───────────────────────────
+aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
+aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
+
+# ── Resume scheduler ──────────────────────────────────────────────────────────
+aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
+aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
+
+# ── Check scheduler rule status ───────────────────────────────────────────────
+aws events describe-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --query '{State: State, Schedule: ScheduleExpression}' --output table
+
+aws events describe-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --query '{State: State, Schedule: ScheduleExpression}' --output table
+```
+
+### Terraform
+
+```bash
+cd terraform
+
+# ── Preview changes (safe — no resources touched) ────────────────────────────
+terraform plan
+
+# ── Apply changes ─────────────────────────────────────────────────────────────
+terraform apply
+
+# ── Check current outputs (IP, instance ID, scheduler status) ─────────────────
+terraform output
+
+# ── Destroy everything (WARNING: IP will change on next apply) ────────────────
+terraform destroy
+```
+
+---
+
 ## 📞 Support
 
 - 📧 Email: harshal.sanjivpatil2000@gmail.com
@@ -718,7 +940,7 @@ response = client.call(
 
 ---
 
-**Last Updated**: March 18, 2026 | **Version**: 1.3.0 | **Status**: ✅ Production Ready — AWS EC2 Live @ http://52.2.3.30
+**Last Updated**: March 18, 2026 | **Version**: 1.4.0 | **Status**: ✅ Production Ready — AWS EC2 Live @ http://52.2.3.30 | Auto Start/Stop: Mon–Fri 9AM–6PM EST
 
 <div align="center">
 
