@@ -598,13 +598,16 @@ s3://<bucket-name>/
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│              EC2 AUTO SCHEDULER (Weekdays only)                  │
+│         EC2 AUTO SCHEDULER (Optional — currently DISABLED)       │
+│                    Manual start/stop is active                   │
 │                                                                  │
-│  EventBridge cron ──► Lambda (ec2-start)                         │
-│  "cron(0 14 ? * MON-FRI *)"  =  9:00 AM EST  ──► StartInstances │
+│  EventBridge Scheduler ──► Lambda (ec2-start)                    │
+│  "cron(0 9 ? * MON-FRI *)" America/New_York (DST auto-handled)  │
+│  = 9:00 AM Mon-Fri New York time  ──► StartInstances             │
 │                                                                  │
-│  EventBridge cron ──► Lambda (ec2-stop)                          │
-│  "cron(0 23 ? * MON-FRI *)"  =  6:00 PM EST  ──► StopInstances  │
+│  EventBridge Scheduler ──► Lambda (ec2-stop)                     │
+│  "cron(0 18 ? * MON-FRI *)" America/New_York (DST auto-handled) │
+│  = 6:00 PM Mon-Fri New York time  ──► StopInstances              │
 │                                                                  │
 │  Cost saving: ~$2-3/month vs ~$8/month running 24/7              │
 └─────────────────────────────────────────────────────────────────┘
@@ -629,9 +632,9 @@ All AWS resources are defined as **Terraform code** in the `terraform/` director
 | `aws_iam_instance_profile` | IAM | Attaches role to EC2 |
 | `aws_iam_role_policy` | IAM | S3 access permissions inline policy |
 | `aws_lambda_function` (x2) | Lambda | Start + Stop EC2 functions (Python 3.12) |
-| `aws_cloudwatch_event_rule` (x2) | EventBridge | Cron rules for 9 AM start + 6 PM stop |
-| `aws_cloudwatch_event_target` (x2) | EventBridge | Connects cron rules to Lambda functions |
-| `aws_iam_role` (scheduler) | IAM | Lambda execution role (EC2 start/stop only) |
+| `aws_scheduler_schedule` (x2) | EventBridge Scheduler | DST-aware cron — 9 AM start + 6 PM stop (America/New_York) |
+| `aws_iam_role` (scheduler invoke) | IAM | EventBridge Scheduler role to invoke Lambda |
+| `aws_iam_role` (lambda exec) | IAM | Lambda execution role (EC2 start/stop only) |
 
 ### **Terraform File Map**
 
@@ -745,113 +748,159 @@ response = client.call(
 
 ---
 
-## ⏰ EC2 Auto Scheduler — Start/Stop on Office Hours
+## ⏰ EC2 Manual Start / Stop + Auto Scheduler
 
-The EC2 instance automatically starts every weekday morning and stops every evening. No manual intervention needed. Saves ~65% on EC2 costs vs running 24/7.
+The EC2 instance can be started and stopped **manually anytime** from your terminal.
+An optional **auto-scheduler** (EventBridge + Lambda) can start/stop it automatically on weekday office hours — currently **DISABLED** (manual mode active).
 
-### **How It Works**
+---
 
+### 🖐️ Manual Start / Stop (Use These Daily)
+
+**Prerequisites — one-time setup:**
+```bash
+# Install AWS CLI (if not already installed)
+brew install awscli
+
+# Configure credentials (one-time only)
+aws configure
+# Enter: Access Key ID, Secret Access Key, region = us-east-1, output = json
+
+# Verify it works
+aws sts get-caller-identity
 ```
-Every Monday → Friday:
 
-  9:00 AM EST  ──► EventBridge fires
-                       └── Lambda (ec2-start) runs
-                               └── AWS EC2 API: StartInstances
-                                       └── EC2 boots up (~60 sec)
-                                               └── Docker auto-starts containers
-                                                       └── App live at http://52.2.3.30
-
-  6:00 PM EST  ──► EventBridge fires
-                       └── Lambda (ec2-stop) runs
-                               └── AWS EC2 API: StopInstances
-                                       └── EC2 stops (IP kept, disk kept)
-                                               └── Everything saved, nothing lost
+**Start EC2 (app will be live in ~60 seconds):**
+```bash
+aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
 ```
 
-### **What Happens to the App When EC2 Stops**
+**Stop EC2 (saves cost — IP and data preserved):**
+```bash
+aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+```
+
+**Check if EC2 is running:**
+```bash
+aws ec2 describe-instances \
+  --region us-east-1 \
+  --instance-ids i-06ebc19f707862bdd \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text
+```
+
+> ✅ After starting, open **`http://52.2.3.30`** — app is live once containers boot (~60 sec).
+
+---
+
+### 🔄 What Happens When You Stop / Start
 
 | Item | When Stopped | When Started Again |
 |------|-------------|-------------------|
-| EC2 Instance | Stopped (not terminated) | Starts fresh |
-| Elastic IP (`52.2.3.30`) | **Kept** — IP reserved for you | **Same IP** |
-| Disk / files / repo / `.env` | **Kept** — disk preserved | **Same files** |
-| Docker containers | Stopped gracefully | **Auto-restart** (`restart: unless-stopped`) |
-| Database data | **Kept** — lives on disk | **Same data** |
-| App URL | Offline | Back at `http://52.2.3.30` |
+| EC2 Instance | Stopped (NOT terminated) | Starts fresh |
+| Elastic IP (`52.2.3.30`) | **Kept** — reserved for you | **Same IP** ✅ |
+| Disk / repo / `.env` | **Kept** — disk preserved | **Same files** ✅ |
+| Docker containers | Stopped gracefully | **Auto-restart** (`restart: unless-stopped`) ✅ |
+| Database data | **Kept** — lives on disk | **Same data** ✅ |
+| App URL | Offline (connection refused) | Back at `http://52.2.3.30` ✅ |
 
-### **Cost Comparison**
+---
 
-| Scenario | Hours/month | Approx Cost |
-|----------|-------------|-------------|
-| 24/7 running | 720 hrs | ~$8/month |
-| Office hours only (9AM–6PM, Mon–Fri) | ~195 hrs | ~$2–3/month |
-| **Saving** | | **~$5–6/month (~65% cheaper)** |
+### 🤖 Auto Scheduler (Currently DISABLED — Optional)
 
-> Elastic IP costs ~$0.005/hr when EC2 is stopped — about $0.70/month. Still much cheaper than running 24/7.
+The scheduler uses **AWS EventBridge Scheduler + Lambda** to auto start/stop EC2 on office hours.
+Timezone: `America/New_York` — **DST handled automatically** (no UTC math, no manual adjustment ever).
 
-### **Schedule Configuration**
+**Schedule when enabled:** Start 9:00 AM Mon–Fri | Stop 6:00 PM Mon–Fri (New York time)
 
-Cron times are in **UTC**. Current settings (in `terraform/scheduler.tf`):
-
-| Event | Cron (UTC) | Local Time (EST) | Local Time (EDT) |
-|-------|-----------|-----------------|-----------------|
-| **Start** | `cron(0 14 ? * MON-FRI *)` | 9:00 AM EST | 10:00 AM EDT |
-| **Stop** | `cron(0 23 ? * MON-FRI *)` | 6:00 PM EST | 7:00 PM EDT |
-
-> **Note:** EST = UTC-5 (Nov–Mar) / EDT = UTC-4 (Mar–Nov). Adjust cron in `terraform.tfvars` when clocks change.
-
-### **How to Control the Scheduler**
-
-**Pause (keep rules but disable — no firing):**
+**Enable auto-scheduler (will start/stop automatically):**
 ```bash
-aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
-aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-start \
+  --state ENABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-stop \
+  --state ENABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
 ```
 
-**Resume (re-enable):**
+**Disable auto-scheduler (go back to manual control):**
 ```bash
-aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
-aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-start \
+  --state DISABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-stop \
+  --state DISABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
 ```
 
-**Change schedule (e.g. 8 AM start instead of 9 AM):**
+**Check scheduler status:**
+```bash
+aws scheduler get-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --query '{State: State, Schedule: ScheduleExpression, Timezone: ScheduleExpressionTimezone}' \
+  --output table
+```
+
+**Change schedule time (e.g. 8 AM start):**
 ```hcl
 # In terraform/terraform.tfvars:
-ec2_start_cron_utc = "cron(0 13 ? * MON-FRI *)"   # 8 AM EST
-ec2_stop_cron_utc  = "cron(0 23 ? * MON-FRI *)"   # 6 PM EST
+ec2_start_cron_local = "cron(0 8 ? * MON-FRI *)"   # 8 AM New York time
+ec2_stop_cron_local  = "cron(0 18 ? * MON-FRI *)"  # 6 PM New York time
 ```
 Then: `cd terraform && terraform apply`
 
-**Remove scheduler entirely:**
+**Remove scheduler entirely from AWS:**
 ```hcl
 # In terraform/terraform.tfvars:
 enable_ec2_scheduler = false
 ```
 Then: `cd terraform && terraform apply`
 
-**Manual override (start/stop anytime regardless of schedule):**
-```bash
-# Start now
-aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+### **Cost Comparison**
 
-# Stop now
-aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
-```
+| Scenario | Hours/month | Approx Cost |
+|----------|-------------|-------------|
+| 24/7 running | 720 hrs | ~$8/month |
+| Office hours (9AM–6PM, Mon–Fri) | ~195 hrs | ~$2–3/month |
+| **Saving** | | **~$5–6/month (~65% cheaper)** |
+
+> Elastic IP costs ~$0.005/hr when EC2 is stopped — about $0.70/month. Still much cheaper than running 24/7.
 
 ---
 
 ## 🗂️ Operations Cheatsheet
 
-### EC2 Instance Control
+### 🖐️ EC2 Start / Stop (Daily Use)
 
 ```bash
-# ── Start EC2 manually ───────────────────────────────────────────────────────
+# ── START EC2 (app live in ~60 sec) ──────────────────────────────────────────
 aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
 
-# ── Stop EC2 manually ────────────────────────────────────────────────────────
+# ── STOP EC2 (saves cost — IP + data kept) ───────────────────────────────────
 aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
 
-# ── Check EC2 state ──────────────────────────────────────────────────────────
+# ── Check EC2 state (running / stopped / pending) ────────────────────────────
 aws ec2 describe-instances \
   --region us-east-1 \
   --instance-ids i-06ebc19f707862bdd \
@@ -866,7 +915,50 @@ aws ec2 describe-instances \
   --output text
 ```
 
-### SSH & Docker
+### 🔄 Scheduler Control (Enable / Disable Auto Start-Stop)
+
+```bash
+# ── ENABLE auto-scheduler (9 AM start, 6 PM stop, Mon–Fri, NY time) ──────────
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --state ENABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --state ENABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+# ── DISABLE auto-scheduler (go back to manual control) ───────────────────────
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --state DISABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --state DISABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+# ── Check scheduler status ────────────────────────────────────────────────────
+aws scheduler get-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --query '{State: State, Schedule: ScheduleExpression, Timezone: ScheduleExpressionTimezone}' \
+  --output table
+```
+
+### 🔒 SSH & Docker
 
 ```bash
 # ── SSH into EC2 ─────────────────────────────────────────────────────────────
@@ -874,9 +966,9 @@ ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30
 
 # ── Check all containers are running ─────────────────────────────────────────
 ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
-  "cd ~/utility-billing-ai && docker compose ps"
+  "cd ~/utility-billing-ai && docker compose -f docker-compose.yml -f docker-compose.prod.yml ps"
 
-# ── Start all services (if containers stopped) ───────────────────────────────
+# ── Start all services manually (if containers stopped) ──────────────────────
 ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
   "cd ~/utility-billing-ai && \
    docker compose -f docker-compose.yml -f docker-compose.prod.yml \
@@ -894,26 +986,7 @@ ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
 ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 "free -h"
 ```
 
-### Scheduler Control
-
-```bash
-# ── Pause scheduler (EC2 will NOT auto start/stop) ───────────────────────────
-aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
-aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
-
-# ── Resume scheduler ──────────────────────────────────────────────────────────
-aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start
-aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop
-
-# ── Check scheduler rule status ───────────────────────────────────────────────
-aws events describe-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
-  --query '{State: State, Schedule: ScheduleExpression}' --output table
-
-aws events describe-rule --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
-  --query '{State: State, Schedule: ScheduleExpression}' --output table
-```
-
-### Terraform
+### 🏗️ Terraform
 
 ```bash
 cd terraform
@@ -940,7 +1013,7 @@ terraform destroy
 
 ---
 
-**Last Updated**: March 18, 2026 | **Version**: 1.4.0 | **Status**: ✅ Production Ready — AWS EC2 Live @ http://52.2.3.30 | Auto Start/Stop: Mon–Fri 9AM–6PM EST
+**Last Updated**: March 19, 2026 | **Version**: 1.5.0 | **Status**: ✅ Production Ready — AWS EC2 @ http://52.2.3.30 | Scheduler: DISABLED (manual start/stop active)
 
 <div align="center">
 

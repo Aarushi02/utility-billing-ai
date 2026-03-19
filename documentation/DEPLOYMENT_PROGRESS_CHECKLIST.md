@@ -1,7 +1,7 @@
 # AWS Cloud Deployment — Progress Checklist
 **Project:** Utility Billing AI
 **Server:** AWS EC2 t3.micro — `us-east-1`
-**Last Updated:** 2026-03-18
+**Last Updated:** 2026-03-19
 **Current Public IP:** `52.2.3.30`
 **App URL:** `http://52.2.3.30` *(via Nginx on port 80)*
 
@@ -170,20 +170,62 @@ utility-billing-ai-nginx-1    nginx:alpine                   Up              0.0
 - [x] `terraform/scheduler.tf` created — all scheduler resources defined as Terraform code
 - [x] Lambda `utility-billing-ai-prod-ec2-start` — Python 3.12, starts EC2 instance
 - [x] Lambda `utility-billing-ai-prod-ec2-stop` — Python 3.12, stops EC2 instance
-- [x] EventBridge rule: **Start** — `cron(0 14 ? * MON-FRI *)` = **9:00 AM EST Mon–Fri**
-- [x] EventBridge rule: **Stop** — `cron(0 23 ? * MON-FRI *)` = **6:00 PM EST Mon–Fri**
-- [x] IAM role for Lambda with least-privilege (only this EC2, only start/stop)
-- [x] `terraform apply` successful — 8 resources created
-- [x] Scheduler status output: `ENABLED — Start: cron(0 14 ? * MON-FRI *) | Stop: cron(0 23 ? * MON-FRI *) (UTC)`
+- [x] **Upgraded from CloudWatch Events → EventBridge Scheduler** (timezone-aware, DST auto-handled)
+- [x] Schedule: `cron(0 9 ? * MON-FRI *)` **America/New_York** = **9:00 AM Mon–Fri (EST & EDT)**
+- [x] Schedule: `cron(0 18 ? * MON-FRI *)` **America/New_York** = **6:00 PM Mon–Fri (EST & EDT)**
+- [x] IAM roles: Lambda execution role + Scheduler invoke role (least-privilege)
+- [x] `terraform apply` successful — all resources in AWS
+- [x] **Current state: DISABLED** — manual start/stop mode active
+
+**Why EventBridge Scheduler instead of CloudWatch Events:**
+```
+CloudWatch Events → UTC crons only → manual UTC math each time clocks change
+EventBridge Scheduler → America/New_York timezone → DST handled automatically forever
+```
 
 **Cost saving:** ~$2–3/month (office hours) vs ~$8/month (24/7 running)
 
-| Control | Command |
-|---------|---------|
-| Pause | `aws events disable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start` (+ stop rule) |
-| Resume | `aws events enable-rule --region us-east-1 --name utility-billing-ai-prod-ec2-start` (+ stop rule) |
-| Remove | Set `enable_ec2_scheduler = false` in `terraform.tfvars` → `terraform apply` |
-| Change time | Edit `ec2_start_cron_utc` / `ec2_stop_cron_utc` in `terraform.tfvars` → `terraform apply` |
+---
+
+### 11. Manual Start / Stop (Current Active Mode)
+
+- [x] EC2 started/stopped manually via AWS CLI — no scheduler dependency
+- [x] Elastic IP retained on stop — same IP `52.2.3.30` every time
+- [x] Docker containers auto-restart on EC2 boot (`restart: unless-stopped`)
+
+**Daily commands:**
+```bash
+# Start EC2 (app live in ~60 sec at http://52.2.3.30)
+aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+
+# Stop EC2 (IP + data preserved)
+aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+```
+
+**Enable/Disable scheduler:**
+```bash
+# Enable auto-scheduler
+aws scheduler update-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --state ENABLED --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --state ENABLED --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+# Disable auto-scheduler (back to manual)
+aws scheduler update-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --state DISABLED --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --state DISABLED --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+```
 
 ---
 

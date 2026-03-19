@@ -215,13 +215,20 @@ localhost:5432  →  postgres container
 ### Production (AWS EC2)
 
 ```
-Internet:8501   →  streamlit container    (public)
-127.0.0.1:8000  →  api container          (EC2-internal only)
-127.0.0.1:8080  →  airflow container      (EC2-internal only)
-127.0.0.1:5432  →  postgres container     (EC2-internal only)
+Internet:80     →  nginx container         (public — only entry point)
+                       └─ proxy_pass http://streamlit:8501
+(internal)      →  streamlit container     (Docker network only — not public)
+127.0.0.1:8000  →  api container           (EC2-internal only)
+127.0.0.1:8080  →  airflow container       (EC2-internal only, profile-gated)
+(internal)      →  postgres container      (Docker network only)
 
-EC2 IAM Role  →  AWS S3 (no stored credentials)
-GitHub Actions  →  SSH into EC2  →  git pull + docker compose rebuild
+EC2 IAM Role  →  AWS S3 (no stored credentials — instance metadata)
+GitHub Actions  →  SSH into EC2  →  git pull + docker compose rebuild (api+streamlit+nginx)
+
+EC2 Start/Stop:
+  Manual:    aws ec2 start-instances / stop-instances (current active mode)
+  Scheduled: EventBridge Scheduler → Lambda (DISABLED — enable when needed)
+             Timezone: America/New_York — DST auto-handled — 9AM start / 6PM stop
 ```
 
 ---
