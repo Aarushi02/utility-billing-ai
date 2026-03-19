@@ -181,25 +181,27 @@ Note: wait 30 to 90 seconds after first boot before validating.
 
 ## 9) Phase 3: Deploy Application on EC2
 
-Inside EC2:
+Inside EC2 (bootstrap already installed Docker + 2GB swap on first boot):
 
 ```bash
-sudo apt update -y
-sudo apt install -y git
-git clone YOUR_REPO_URL
-cd utility-billing-ai
+git clone -b Dev https://github.com/harshalsp0011/utility-billing-ai.git ~/utility-billing-ai
+cp ~/.env ~/utility-billing-ai/.env
+cd ~/utility-billing-ai
 ```
 
-Create `.env` with environment-specific values, then run:
+Start API + Streamlit + Nginx (production mode with both compose files):
 
 ```bash
-# Preferred (current plan): backend + streamlit only
-docker compose up -d --build api streamlit
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
+```
 
-# Optional later (if/when needed): include airflow
-# docker compose up -d --build api streamlit airflow
+**Do NOT run `docker compose up` without specifying services** — it would attempt to pull Airflow which exhausts t3.micro RAM.
 
-docker compose exec api python -m src.database.init_db
+To start Airflow when needed:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile airflow up -d
 ```
 
 ## 10) Validate Runtime and Exposure
@@ -207,15 +209,18 @@ docker compose exec api python -m src.database.init_db
 From EC2:
 
 ```bash
+# API internal health
 curl -sS http://127.0.0.1:8000/api/v1/health/live
-curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501
-curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080
+
+# Nginx public entry point (port 80)
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:80
 ```
 
 From laptop/browser:
-1. `http://PUBLIC_IP:8501` should work
-2. `http://PUBLIC_IP:8000` should not be publicly reachable
-3. `http://PUBLIC_IP:8080` should not be publicly reachable
+1. `http://PUBLIC_IP` (port 80) should work — Nginx serves Streamlit
+2. `http://PUBLIC_IP:8501` should NOT be reachable — blocked by Security Group
+3. `http://PUBLIC_IP:8000` should NOT be reachable
+4. `http://PUBLIC_IP:8080` should NOT be reachable
 
 ## 11) Reuse in Another AWS Account
 
@@ -282,9 +287,11 @@ App deployment:
 [ ] `init_db` command successful
 
 Validation:
-[ ] Streamlit public URL works on port 8501
+[ ] App public URL works at http://PUBLIC_IP (port 80 via Nginx)
 [ ] API port 8000 not publicly exposed
+[ ] Streamlit port 8501 not publicly exposed (Nginx handles it)
 [ ] Airflow port 8080 not publicly exposed
+[ ] Swap space present: `free -h` shows Swap: 2.0Gi
 
 ## 15) Update Log (Keep This Section Growing)
 
@@ -297,7 +304,50 @@ Template:
 4. Commands used:
 5. Validation done:
 
-### 2026-03-13 (Current Session)
+### 2026-03-18 (Session 2 — Nginx + Swap + Full Redeploy)
+
+1. Change made:
+- Added 2GB swap to EC2 bootstrap script (prevents t3.micro OOM crash under Docker load)
+- Added Nginx reverse proxy — Streamlit no longer directly public; Nginx on port 80 handles all traffic
+- Fixed `proxy_pass` in `nginx.conf` to use Docker service name `http://streamlit:8501` (not `127.0.0.1`)
+- Disabled Airflow via Docker Compose `profiles: [airflow]` — prevents accidental Airflow image pull
+- Security Group updated: port 80 open (Nginx), port 8501 removed
+- Terraform destroy + rebuild: new EC2 (`i-06ebc19f707862bdd`), new IP (`52.2.3.30`)
+- Full deployment: clone → .env → docker compose up (api + streamlit + nginx) → init_db
+
+2. Why:
+- Previous EC2 froze due to RAM exhaustion — no swap + Airflow image pull
+- Streamlit on port 8501 was publicly accessible — Nginx adds security layer
+- `127.0.0.1` in nginx.conf referred to Nginx container itself, not Streamlit
+
+3. Commands used:
+```bash
+# Terraform rebuild
+cd terraform
+terraform destroy -auto-approve
+terraform apply -auto-approve
+
+# Copy .env to new EC2
+scp -i ~/Desktop/utility-billing-key.pem .env ubuntu@52.2.3.30:~/.env
+
+# Deploy on EC2
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30
+git clone -b Dev https://github.com/harshalsp0011/utility-billing-ai.git ~/utility-billing-ai
+cp ~/.env ~/utility-billing-ai/.env
+cd ~/utility-billing-ai
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
+```
+
+4. Validation done:
+- `free -h` shows Swap: 2.0Gi ✅
+- Docker 29.3.0 installed ✅
+- All 3 containers Up and healthy ✅
+- API health: `{"status":"ok"}` ✅
+- Nginx HTTP status: 200 ✅
+- App live at `http://52.2.3.30` ✅
+
+### 2026-03-13 (Session 1 — Initial Setup)
 
 1. Change made:
 - Provisioned Terraform infra successfully (EC2, SG, IAM role/profile, EIP).

@@ -1,10 +1,12 @@
-# Utility Billing AI - Deployment
+# Utility Billing AI — Deployment Guide
 
-This project uses a single `docker-compose.yml` for both local and cloud.
+This project uses `docker-compose.yml` as the base config and `docker-compose.prod.yml` as the production override. Together they handle local testing and cloud (AWS EC2) production deployment.
 
-## A) Local Smoke Test
+---
 
-Start:
+## A) Local Smoke Test (Development)
+
+Start API + Streamlit only (Nginx not needed locally):
 
 ```bash
 docker compose up -d --build api streamlit
@@ -23,104 +25,152 @@ Expected:
 1. API health returns `{"status":"ok"}`
 2. Streamlit returns `200`
 
+Open UI: http://127.0.0.1:8501
+
 Stop:
 
 ```bash
 docker compose down
 ```
 
-## B) EC2 Production (Single-VM)
+---
 
-Target behavior:
+## B) EC2 Production (Single-VM with Nginx)
 
-1. Streamlit is public on port 8501.
-2. API is private on EC2 localhost only.
-3. Airflow is private on EC2 localhost only.
+### Architecture
 
-`docker-compose.yml` is already configured for this:
-
-1. API -> `127.0.0.1:8000:8000`
-2. Airflow -> `127.0.0.1:8080:8080`
-3. Streamlit -> `8501:8501`
-
-### 1) AWS setup
-
-1. Launch EC2 (Ubuntu 22.04+ recommended)
-2. Attach Elastic IP
-3. Attach IAM role if using S3
-
-Security Group inbound:
-
-1. `22` from your IP
-2. `8501` from internet (or restrict to your office/VPN IP)
-
-Do not open `8000` or `8080`.
-
-### 2) Server bootstrap
-
-```bash
-sudo apt update
-sudo apt install -y ca-certificates curl git
-
-sudo install -m 0755 -d /etc/apt/keyrings
-curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-sudo chmod a+r /etc/apt/keyrings/docker.gpg
-
-echo \
-	"deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu \
-	$(. /etc/os-release && echo $VERSION_CODENAME) stable" | \
-	sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
-
-sudo apt update
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
-sudo usermod -aG docker $USER
-newgrp docker
+```
+Browser → http://<EC2_IP> (port 80)
+              ↓
+         Nginx container     — only public port (80)
+              ↓ proxy_pass http://streamlit:8501
+         Streamlit container — internal Docker network only
+              ↓ http://api:8000
+         API container       — internal only
 ```
 
-### 3) Deploy app
+**Key security points:**
+- Streamlit is **NOT** directly public — Nginx proxies all traffic
+- API is **NOT** publicly reachable — internal only
+- Airflow is **disabled** by default (Docker Compose profile)
+- Only port `80` is open in the AWS Security Group
+
+### 1) AWS Infrastructure Setup
+
+Use Terraform (fully automated):
 
 ```bash
-git clone <repo-url>
-cd utility-billing-ai
+cd terraform
+terraform init
+terraform plan
+terraform apply
 ```
 
-Create `.env` with production values.
+Terraform provisions:
+- EC2 `t3.micro` — Ubuntu 24.04 — 20GB gp3 disk
+- Security Group: port 22 (your IP only) + port 80 (public)
+- IAM Role + Instance Profile (S3 access)
+- Elastic IP
+- Bootstrap script on first boot: **2GB swap + Docker CE installed automatically**
 
-Start stack:
+### 2) Copy .env to EC2
 
 ```bash
-docker compose up -d --build api streamlit airflow
+# Get IP from terraform output
+EC2_IP=$(cd terraform && terraform output -raw instance_public_ip)
+
+# Copy .env (never commit secrets to git)
+scp -i ~/Desktop/utility-billing-key.pem .env ubuntu@$EC2_IP:~/.env
 ```
 
-Initialize schema/migrations:
+### 3) SSH and Deploy
 
 ```bash
-docker compose exec api python -m src.database.init_db
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@$EC2_IP
+
+# Inside EC2:
+git clone -b Dev https://github.com/harshalsp0011/utility-billing-ai.git ~/utility-billing-ai
+cp ~/.env ~/utility-billing-ai/.env
+cd ~/utility-billing-ai
+
+# Start API + Streamlit + Nginx (production mode)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+
+# Initialize database
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
 ```
 
-### 4) Verify production
+### 4) Verify Production
 
 From EC2:
 
 ```bash
+# API internal health
 curl -sS http://127.0.0.1:8000/api/v1/health/live
-curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501
-curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080
+
+# Nginx → Streamlit (public entry point)
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:80
 ```
 
 Expected:
 
 1. API health returns `{"status":"ok"}`
-2. Streamlit returns `200`
-3. Airflow returns `200` only from localhost on EC2
+2. Nginx returns `200`
 
-From your laptop/browser:
+From browser:
 
-1. `http://<EC2_PUBLIC_IP>:8501` works
-2. `http://<EC2_PUBLIC_IP>:8000` should not be reachable
-3. `http://<EC2_PUBLIC_IP>:8080` should not be reachable
+1. `http://<EC2_PUBLIC_IP>` — works (Nginx on port 80)
+2. `http://<EC2_PUBLIC_IP>:8501` — should NOT be reachable (blocked by Security Group)
+3. `http://<EC2_PUBLIC_IP>:8000` — should NOT be reachable
 
-## C) Required Environment Variables
+---
+
+## C) Nginx Configuration
+
+**File:** `nginx/nginx.conf`
+
+```nginx
+server {
+    listen 80;
+    server_name _;
+
+    location / {
+        proxy_pass         http://streamlit:8501;
+        proxy_http_version 1.1;
+        proxy_set_header   Upgrade $http_upgrade;
+        proxy_set_header   Connection "upgrade";
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_read_timeout 86400;
+    }
+}
+```
+
+**Important:** `proxy_pass` uses `http://streamlit:8501` — the Docker service name. Using `127.0.0.1` would point to the Nginx container itself, not Streamlit.
+
+**File:** `docker-compose.prod.yml`
+
+```yaml
+services:
+  api:
+    ports:
+      - "127.0.0.1:8000:8000"  # API only reachable on EC2 itself
+  streamlit:
+    ports: []                   # No direct public port — Nginx handles it
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "0.0.0.0:80:80"        # Only public entry point
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - streamlit
+    restart: unless-stopped
+```
+
+---
+
+## D) Required Environment Variables
 
 Minimum:
 
@@ -134,25 +184,40 @@ Recommended:
 2. `AWS_BUCKET_NAME`, `AWS_REGION`
 3. Prefer IAM role over static AWS access keys on EC2
 
-## D) Operate / Troubleshoot
+---
 
-Restart:
+## E) Operate / Troubleshoot
+
+Check status:
 
 ```bash
-docker compose up -d --build api streamlit airflow
+docker compose -f docker-compose.yml -f docker-compose.prod.yml ps
 ```
 
-Logs:
+Restart services:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+```
+
+View logs:
 
 ```bash
 docker compose logs --tail=200 api
 docker compose logs --tail=200 streamlit
-docker compose logs --tail=200 airflow
+docker compose logs --tail=200 nginx
 ```
 
-Recreate:
+Clean restart:
 
 ```bash
-docker compose down --remove-orphans
-docker compose up -d --build api streamlit airflow
+docker compose -f docker-compose.yml -f docker-compose.prod.yml down --remove-orphans
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
+```
+
+Enable Airflow (when needed):
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile airflow up -d
 ```

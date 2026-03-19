@@ -345,7 +345,7 @@ docker compose up -d --build api streamlit
 ```
 
 ### **Production (AWS EC2 — already deployed)**
-- Public URL: `http://98.89.240.117:8501`
+- Public URL: `http://52.2.3.30` *(via Nginx on port 80)*
 - Infra provisioned via Terraform (`terraform/`)
 - See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for full setup guide
 
@@ -404,7 +404,7 @@ dev branch  ──► pull request ──► merge to main
                             GitHub Actions triggers
                                       │
                                       ▼
-                            SSH into EC2 (98.89.240.117)
+                            SSH into EC2 (52.2.3.30)
                                       │
                                       ▼
                       git fetch + git reset --hard origin/main
@@ -419,7 +419,7 @@ Go to your repo → **Settings → Secrets and variables → Actions → New rep
 
 | Secret Name | Value |
 |-------------|-------|
-| `EC2_HOST` | `98.89.240.117` |
+| `EC2_HOST` | `52.2.3.30` *(update if IP changes after terraform destroy+apply)* |
 | `EC2_USER` | `ubuntu` |
 | `EC2_SSH_KEY` | Full contents of `~/Desktop/utility-billing-key.pem` |
 
@@ -444,9 +444,10 @@ The entire application stack is containerised with **Docker** and orchestrated u
 
 | Service | Build Source | Exposed Port | Purpose |
 |---------|-------------|-------------|---------|
-| `api` | `Dockerfile.api` | `127.0.0.1:8000` (local only) | FastAPI backend — all AI logic & DB calls |
-| `streamlit` | `app/Dockerfile` | `8501` (public) | Streamlit frontend — user-facing dashboard |
-| `airflow` | `airflow/Dockerfile` | `127.0.0.1:8080` (local only) | Apache Airflow — DAG scheduler & executor |
+| `api` | `Dockerfile.api` | `127.0.0.1:8000` (internal only) | FastAPI backend — all AI logic & DB calls |
+| `streamlit` | `app/Dockerfile` | Internal only (via Nginx) | Streamlit frontend — user-facing dashboard |
+| `nginx` | `nginx:alpine` | `0.0.0.0:80` (public) | Reverse proxy — only public entry point |
+| `airflow` | `apache/airflow` | `127.0.0.1:8080` (disabled by default) | Apache Airflow — DAG scheduler (profile-gated) |
 | `db` | `postgres:15` | `5432` (internal network only) | PostgreSQL — persistent structured data |
 
 ### **Docker Compose Files**
@@ -471,13 +472,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 All containers share an internal Docker bridge network. The Streamlit container calls the FastAPI container via `http://api:8000` — the Docker service name `api` resolves automatically inside the network. Neither `api` nor `airflow` are reachable from outside EC2.
 
 ```
-Internet ──► EC2:8501 ──► streamlit container
-                               │  http://api:8000
-                               ▼
-                           api container
-                               │  postgres://db:5432
-                               ▼
-                           db container (PostgreSQL)
+Internet ──► EC2:80 ──► nginx container
+                              │  proxy_pass http://streamlit:8501
+                              ▼
+                          streamlit container
+                              │  http://api:8000
+                              ▼
+                          api container
+                              │  postgres://db:5432
+                              ▼
+                          db container (PostgreSQL)
 ```
 
 ### **Volumes & Persistent State**
@@ -518,18 +522,19 @@ The production stack runs on **AWS** using a cost-effective single-VM design. No
 
 | Service | Role in This Project |
 |---------|---------------------|
-| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers |
-| **Elastic IP** | Static public IP (`98.89.240.117`) — survives EC2 reboots |
+| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers (with 2GB swap) |
+| **Elastic IP** | Static public IP — survives EC2 reboots (changes on destroy+recreate) |
 | **IAM Role + Instance Profile** | Grants EC2 permission to read/write S3 — no hard-coded AWS keys on server |
 | **S3 Bucket** | Stores uploaded bill PDFs, tariff JSONs, and generated audit reports |
-| **Security Group** | Firewall — only ports `22` (SSH, your IP only) and `8501` (Streamlit, public) are open |
+| **Security Group** | Firewall — only ports `22` (SSH, your IP only) and `80` (Nginx, public) are open |
 
 ### **Security Group Rules**
 
 | Port | Protocol | Source | Reason |
 |------|----------|--------|--------|
 | `22` | TCP | Your IP only | SSH admin access |
-| `8501` | TCP | `0.0.0.0/0` | Streamlit public access |
+| `80` | TCP | `0.0.0.0/0` | Nginx public access (proxies to Streamlit) |
+| `8501` | — | ❌ Blocked | Streamlit internal only (Nginx handles it) |
 | `8000` | — | ❌ Blocked | FastAPI internal only |
 | `8080` | — | ❌ Blocked | Airflow internal only |
 
@@ -558,16 +563,18 @@ s3://<bucket-name>/
 ```
 Your Browser
     │
-    ▼ port 8501 (public)
-EC2 Instance  ──  Elastic IP: 98.89.240.117
-│  AMI: Ubuntu 22.04, t3.micro, us-east-1
-│  Security Group: 22 (your IP), 8501 (public)
+    ▼ port 80 (public via Nginx)
+EC2 Instance  ──  Elastic IP: 52.2.3.30
+│  AMI: Ubuntu 24.04, t3.micro, us-east-1
+│  2GB Swap (auto-configured via bootstrap)
+│  Security Group: 22 (your IP), 80 (public)
 │  IAM Role ──► S3 read/write (no stored keys)
 │
 └── Docker Compose Stack
-    ├── streamlit   :8501  (public)
-    ├── api         :8000  (internal)
-    ├── airflow     :8080  (internal)
+    ├── nginx       :80    (public — reverse proxy)
+    ├── streamlit   :8501  (internal only — via Nginx)
+    ├── api         :8000  (internal only)
+    ├── airflow     :8080  (disabled by default)
     └── postgres    :5432  (internal)
 
 AWS S3 Bucket
@@ -711,7 +718,7 @@ response = client.call(
 
 ---
 
-**Last Updated**: March 13, 2026 | **Version**: 1.2.0 | **Status**: ✅ Production Ready — AWS EC2 Live
+**Last Updated**: March 18, 2026 | **Version**: 1.3.0 | **Status**: ✅ Production Ready — AWS EC2 Live @ http://52.2.3.30
 
 <div align="center">
 
