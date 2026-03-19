@@ -5,14 +5,16 @@
 # and stops it at office close time (Mon-Fri).
 #
 # How it works:
-#   EventBridge (cron rule)
+#   EventBridge Scheduler (timezone-aware)
 #       └── triggers Lambda function
 #               └── calls ec2:StartInstances / ec2:StopInstances
 #
+# DST handled automatically — uses America/New_York timezone
+# so clocks never need manual adjustment for EST/EDT changes.
+#
 # Toggle on/off:   set enable_ec2_scheduler = true/false in terraform.tfvars
-# Pause without destroy: aws events disable-rule --name <rule-name>
-# Resume:          aws events enable-rule --name <rule-name>
-# Times:           all crons are in UTC — see variable descriptions
+# Pause:           set state = "DISABLED" in aws_scheduler_schedule and apply
+# Times:           set in local time (America/New_York) — no UTC math needed
 # ============================================================
 
 # ── TOGGLE VARIABLE ─────────────────────────────────────────
@@ -23,23 +25,21 @@ variable "enable_ec2_scheduler" {
   default     = true
 }
 
-# ── TIME VARIABLES (UTC) ────────────────────────────────────
-# Buffalo NY timezone offsets:
-#   EST (Nov–Mar): UTC-5  →  9 AM EST  = 14:00 UTC | 6 PM EST = 23:00 UTC
-#   EDT (Mar–Nov): UTC-4  →  9 AM EDT  = 13:00 UTC | 6 PM EDT = 22:00 UTC
-# Cron format: cron(minute hour day-of-month month day-of-week year)
-# ? in day-of-month means "any" when day-of-week is specified.
+# ── TIME VARIABLES (LOCAL TIME — America/New_York) ──────────
+# These are in local New York time — DST is handled automatically.
+# Format: cron(minute hour day-of-month month day-of-week year)
+# Example: cron(0 9 ? * MON-FRI *) = 9:00 AM every weekday
 
-variable "ec2_start_cron_utc" {
-  description = "Cron expression (UTC) for EC2 start — default 9 AM EST Mon-Fri"
+variable "ec2_start_cron_local" {
+  description = "Cron (America/New_York) for EC2 start — default 9 AM Mon-Fri"
   type        = string
-  default     = "cron(0 14 ? * MON-FRI *)"
+  default     = "cron(0 9 ? * MON-FRI *)"
 }
 
-variable "ec2_stop_cron_utc" {
-  description = "Cron expression (UTC) for EC2 stop — default 6 PM EST Mon-Fri"
+variable "ec2_stop_cron_local" {
+  description = "Cron (America/New_York) for EC2 stop — default 6 PM Mon-Fri"
   type        = string
-  default     = "cron(0 23 ? * MON-FRI *)"
+  default     = "cron(0 18 ? * MON-FRI *)"
 }
 
 # ── IAM ROLE FOR LAMBDA ─────────────────────────────────────
@@ -186,63 +186,90 @@ resource "aws_lambda_function" "ec2_stop" {
   }
 }
 
-# ── EVENTBRIDGE RULES (CRON) ─────────────────────────────────
+# ── IAM ROLE FOR EVENTBRIDGE SCHEDULER → LAMBDA ──────────────
+# EventBridge Scheduler needs its own role to invoke Lambda.
+# (Different from the Lambda execution role above.)
 
-resource "aws_cloudwatch_event_rule" "ec2_start" {
-  count               = var.enable_ec2_scheduler ? 1 : 0
-  name                = "${var.project_name}-${var.environment}-ec2-start"
-  description         = "Start EC2 at office open time (Mon-Fri)"
-  schedule_expression = var.ec2_start_cron_utc
-  state               = "ENABLED"
-  # Note: tags omitted — utility-bot lacks events:TagResource permission
-}
-
-resource "aws_cloudwatch_event_rule" "ec2_stop" {
-  count               = var.enable_ec2_scheduler ? 1 : 0
-  name                = "${var.project_name}-${var.environment}-ec2-stop"
-  description         = "Stop EC2 at office close time (Mon-Fri)"
-  schedule_expression = var.ec2_stop_cron_utc
-  state               = "ENABLED"
-  # Note: tags omitted — utility-bot lacks events:TagResource permission
-}
-
-# ── CONNECT EVENTBRIDGE → LAMBDA ─────────────────────────────
-
-resource "aws_cloudwatch_event_target" "start_target" {
+resource "aws_iam_role" "scheduler_invoke_role" {
   count = var.enable_ec2_scheduler ? 1 : 0
-  rule  = aws_cloudwatch_event_rule.ec2_start[0].name
-  arn   = aws_lambda_function.ec2_start[0].arn
+  name  = "${var.project_name}-${var.environment}-scheduler-invoke-role"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "scheduler.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+
+  tags = {
+    Project     = var.project_name
+    Environment = var.environment
+  }
 }
 
-resource "aws_cloudwatch_event_target" "stop_target" {
+resource "aws_iam_role_policy" "scheduler_invoke_lambda" {
   count = var.enable_ec2_scheduler ? 1 : 0
-  rule  = aws_cloudwatch_event_rule.ec2_stop[0].name
-  arn   = aws_lambda_function.ec2_stop[0].arn
+  name  = "${var.project_name}-${var.environment}-scheduler-invoke-lambda"
+  role  = aws_iam_role.scheduler_invoke_role[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect = "Allow"
+      Action = ["lambda:InvokeFunction"]
+      Resource = [
+        aws_lambda_function.ec2_start[0].arn,
+        aws_lambda_function.ec2_stop[0].arn
+      ]
+    }]
+  })
 }
 
-# ── GRANT EVENTBRIDGE PERMISSION TO INVOKE LAMBDA ────────────
+# ── EVENTBRIDGE SCHEDULER (TIMEZONE-AWARE) ───────────────────
+# Uses America/New_York timezone — handles EST/EDT automatically.
+# No UTC math needed. No manual adjustment for DST ever.
 
-resource "aws_lambda_permission" "allow_eventbridge_start" {
-  count         = var.enable_ec2_scheduler ? 1 : 0
-  statement_id  = "AllowEventBridgeStart"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.ec2_start[0].function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.ec2_start[0].arn
+resource "aws_scheduler_schedule" "ec2_start" {
+  count       = var.enable_ec2_scheduler ? 1 : 0
+  name        = "${var.project_name}-${var.environment}-ec2-start"
+  description = "Start EC2 at 9 AM New York time, Mon-Fri (DST-aware)"
+
+  schedule_expression          = var.ec2_start_cron_local
+  schedule_expression_timezone = "America/New_York"
+
+  flexible_time_window {
+    mode = "OFF"  # Fire exactly on time, no flexibility window
+  }
+
+  target {
+    arn      = aws_lambda_function.ec2_start[0].arn
+    role_arn = aws_iam_role.scheduler_invoke_role[0].arn
+  }
 }
 
-resource "aws_lambda_permission" "allow_eventbridge_stop" {
-  count         = var.enable_ec2_scheduler ? 1 : 0
-  statement_id  = "AllowEventBridgeStop"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.ec2_stop[0].function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.ec2_stop[0].arn
+resource "aws_scheduler_schedule" "ec2_stop" {
+  count       = var.enable_ec2_scheduler ? 1 : 0
+  name        = "${var.project_name}-${var.environment}-ec2-stop"
+  description = "Stop EC2 at 6 PM New York time, Mon-Fri (DST-aware)"
+
+  schedule_expression          = var.ec2_stop_cron_local
+  schedule_expression_timezone = "America/New_York"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+
+  target {
+    arn      = aws_lambda_function.ec2_stop[0].arn
+    role_arn = aws_iam_role.scheduler_invoke_role[0].arn
+  }
 }
 
 # ── OUTPUTS ───────────────────────────────────────────────────
 
 output "scheduler_status" {
-  value = var.enable_ec2_scheduler ? "ENABLED — Start: ${var.ec2_start_cron_utc} | Stop: ${var.ec2_stop_cron_utc} (UTC)" : "DISABLED"
+  value       = var.enable_ec2_scheduler ? "ENABLED — Start: 9:00 AM Mon-Fri | Stop: 6:00 PM Mon-Fri (America/New_York — DST auto-handled)" : "DISABLED"
   description = "EC2 auto start/stop scheduler status"
 }
