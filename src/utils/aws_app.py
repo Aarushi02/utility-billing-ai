@@ -12,6 +12,7 @@ from io import BytesIO
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 from dotenv import load_dotenv
+from src.services.usage_tracker import log_aws
 
 load_dotenv()
 
@@ -75,14 +76,17 @@ def upload_file_to_s3(file_path, s3_key):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("upload_file", success=False, error="S3 client not initialized")
         return False
-    
+
     try:
         s3_client.upload_file(str(file_path), BUCKET_NAME, s3_key)
         logger.info(f"Uploaded {file_path} to s3://{BUCKET_NAME}/{s3_key}")
+        log_aws("upload_file", success=True)
         return True
     except Exception as e:
         logger.error(f"Failed to upload {file_path}: {e}")
+        log_aws("upload_file", success=False, error=str(e))
         return False
 
 
@@ -99,20 +103,21 @@ def upload_fileobject_to_s3(file_object, s3_key):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("upload_fileobj", success=False, error="S3 client not initialized")
         return False
-    
+
     try:
-        # Reset file pointer if needed
         if hasattr(file_object, 'seek'):
             file_object.seek(0)
-        
+
         s3_client.upload_fileobj(file_object, BUCKET_NAME, s3_key)
         logger.info(f"Uploaded file object to s3://{BUCKET_NAME}/{s3_key}")
+        log_aws("upload_fileobj", success=True)
         return True
     except Exception as e:
         logger.error(f"Failed to upload file object: {e}")
+        log_aws("upload_fileobj", success=False, error=str(e))
         return False
-
 
 def upload_json_to_s3(data, s3_key):
     """
@@ -127,8 +132,9 @@ def upload_json_to_s3(data, s3_key):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("put_object", success=False, error="S3 client not initialized")
         return False
-    
+
     try:
         json_data = json.dumps(data, indent=2)
         s3_client.put_object(
@@ -138,9 +144,11 @@ def upload_json_to_s3(data, s3_key):
             ContentType='application/json'
         )
         logger.info(f"Uploaded JSON to s3://{BUCKET_NAME}/{s3_key}")
+        log_aws("put_object", success=True)
         return True
     except Exception as e:
         logger.error(f"Failed to upload JSON: {e}")
+        log_aws("put_object", success=False, error=str(e))
         return False
 
 
@@ -159,17 +167,19 @@ def download_file_from_s3(s3_key, local_path):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("download_file", success=False, error="S3 client not initialized")
         return False
-    
+
     try:
         Path(local_path).parent.mkdir(parents=True, exist_ok=True)
         s3_client.download_file(BUCKET_NAME, s3_key, str(local_path))
         logger.info(f"Downloaded s3://{BUCKET_NAME}/{s3_key} to {local_path}")
+        log_aws("download_file", success=True)
         return True
     except Exception as e:
         logger.error(f"Failed to download {s3_key}: {e}")
+        log_aws("download_file", success=False, error=str(e))
         return False
-
 
 def download_json_from_s3(s3_key):
     """
@@ -183,16 +193,19 @@ def download_json_from_s3(s3_key):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("get_object_json", success=False, error="S3 client not initialized")
         return None
-    
+
     try:
         response = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
         content = response['Body'].read().decode('utf-8')
         data = json.loads(content)
         logger.info(f"Downloaded JSON from s3://{BUCKET_NAME}/{s3_key}")
+        log_aws("get_object_json", success=True)
         return data
     except Exception as e:
         logger.error(f"Failed to download JSON {s3_key}: {e}")
+        log_aws("get_object_json", success=False, error=str(e))
         return None
 
 
@@ -208,15 +221,18 @@ def get_file_content_from_s3(s3_key):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("get_object_bytes", success=False, error="S3 client not initialized")
         return None
-    
+
     try:
         response = s3_client.get_object(Bucket=BUCKET_NAME, Key=s3_key)
         content = response['Body'].read()
         logger.info(f"Retrieved content from s3://{BUCKET_NAME}/{s3_key}")
+        log_aws("get_object_bytes", success=True)
         return content
     except Exception as e:
         logger.error(f"Failed to get content {s3_key}: {e}")
+        log_aws("get_object_bytes", success=False, error=str(e))
         return None
 
 

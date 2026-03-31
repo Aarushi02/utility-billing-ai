@@ -64,6 +64,14 @@ def render_dashboard():
             "color": "#fa709a",
             "icon": "📜"
         },
+        {
+            "title": "📈 Usage Metrics",
+            "description": "Monitor AWS and LLM usage",
+            "details": "Track budget, spend, and remaining credits in real time",
+            "page": "Usage Metrics",
+            "color": "#4facfe",
+            "icon": "📈"
+        },
     ]
     
     # Custom CSS for enhanced cards with buttons inside
