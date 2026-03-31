@@ -67,7 +67,7 @@ def render_dashboard():
         {
             "title": "📈 Usage Metrics",
             "description": "Monitor AWS and LLM usage",
-            "details": "Track budget, spend, and remaining credits in real time",
+            "details": "Track Usage in real time",
             "page": "Usage Metrics",
             "color": "#4facfe",
             "icon": "📈"

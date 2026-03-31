@@ -249,12 +249,15 @@ def file_exists_in_s3(s3_key):
         bool: True if exists, False otherwise
     """
     if not s3_client:
+        log_aws("head_object", success=False, error="S3 client not initialized")
         return False
-    
+
     try:
         s3_client.head_object(Bucket=BUCKET_NAME, Key=s3_key)
+        log_aws("head_object", success=True)
         return True
-    except ClientError:
+    except ClientError as e:
+        log_aws("head_object", success=False, error=str(e))
         return False
 
 
@@ -270,17 +273,21 @@ def list_files_in_s3(prefix):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("list_objects_v2", success=False, error="S3 client not initialized")
         return []
-    
+
     try:
         response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
         if 'Contents' in response:
             keys = [obj['Key'] for obj in response['Contents']]
             logger.info(f"Found {len(keys)} files with prefix {prefix}")
+            log_aws("list_objects_v2", success=True)
             return keys
+        log_aws("list_objects_v2", success=True)
         return []
     except Exception as e:
         logger.error(f"Failed to list files with prefix {prefix}: {e}")
+        log_aws("list_objects_v2", success=False, error=str(e))
         return []
 
 
@@ -296,6 +303,7 @@ def list_files_in_s3_with_meta(prefix):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("list_objects_v2_with_meta", success=False, error="S3 client not initialized")
         return []
     try:
         response = s3_client.list_objects_v2(Bucket=BUCKET_NAME, Prefix=prefix)
@@ -305,10 +313,13 @@ def list_files_in_s3_with_meta(prefix):
                 for obj in response['Contents']
             ]
             logger.info(f"Found {len(items)} files with prefix {prefix} (with metadata)")
+            log_aws("list_objects_v2_with_meta", success=True)
             return items
+        log_aws("list_objects_v2_with_meta", success=True)
         return []
     except Exception as e:
         logger.error(f"Failed to list files with meta for prefix {prefix}: {e}")
+        log_aws("list_objects_v2_with_meta", success=False, error=str(e))
         return []
 
 
@@ -324,14 +335,17 @@ def delete_file_from_s3(s3_key):
     """
     if not s3_client:
         logger.error("S3 client not initialized")
+        log_aws("delete_object", success=False, error="S3 client not initialized")
         return False
-    
+
     try:
         s3_client.delete_object(Bucket=BUCKET_NAME, Key=s3_key)
         logger.info(f"Deleted s3://{BUCKET_NAME}/{s3_key}")
+        log_aws("delete_object", success=True)
         return True
     except Exception as e:
         logger.error(f"Failed to delete {s3_key}: {e}")
+        log_aws("delete_object", success=False, error=str(e))
         return False
 
 
