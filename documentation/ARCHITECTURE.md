@@ -18,7 +18,7 @@ This document is the definitive technical reference for the system's internal st
 ┌─────────────────────────────────────────────────────────────────────┐
 │  PRESENTATION LAYER                                                 │
 │  Streamlit UI (app/)  ←→  User browser                             │
-│  Port 8501 — publicly reachable                                     │
+│  Port 8501 — internal to the VM; Nginx is the public entry point    │
 └──────────────────────────────┬──────────────────────────────────────┘
                                │ HTTP REST (API_BASE_URL)
 ┌──────────────────────────────▼──────────────────────────────────────┐

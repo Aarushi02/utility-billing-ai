@@ -45,6 +45,13 @@ variable "ssh_allowed_cidr" {
   type        = string
 }
 
+# Keep SSH optional. Session Manager can be used as the primary access path.
+variable "enable_ssh_ingress" {
+  description = "Whether to expose SSH port 22 in the security group"
+  type        = bool
+  default     = true
+}
+
 # UI access CIDRs for Streamlit; restrict to office/VPN when possible.
 variable "streamlit_allowed_cidrs" {
   description = "CIDRs allowed to access Streamlit on port 8501"
@@ -55,6 +62,13 @@ variable "streamlit_allowed_cidrs" {
 # Elastic IP helps keep a stable public address.
 variable "assign_elastic_ip" {
   description = "Attach an Elastic IP to EC2 instance"
+  type        = bool
+  default     = true
+}
+
+# Attach AmazonSSMManagedInstanceCore to the EC2 role for Session Manager access.
+variable "enable_ssm_access" {
+  description = "Whether to enable AWS Systems Manager Session Manager access for EC2"
   type        = bool
   default     = true
 }

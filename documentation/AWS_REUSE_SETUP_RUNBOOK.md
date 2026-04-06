@@ -121,6 +121,11 @@ Verify:
 aws ec2 describe-key-pairs --region us-east-1 --query 'KeyPairs[].KeyName' --output text
 ```
 
+Team note:
+1. Do not share one PEM file across developers.
+2. Use PEM only as break-glass admin access.
+3. Primary shared workflow should be IAM + Session Manager.
+
 ## 6) Configure Terraform Variables
 
 Main file: [terraform/terraform.tfvars](terraform/terraform.tfvars)
@@ -141,6 +146,8 @@ curl -s https://checkip.amazonaws.com
 Set:
 1. `ssh_allowed_cidr = YOUR_IP/32`
 2. `streamlit_allowed_cidrs = ["0.0.0.0/0"]` during initial testing
+3. `enable_ssm_access = true`
+4. `enable_ssh_ingress = true` during migration, then `false` after Session Manager is validated
 
 ## 7) Phase 1: Create Infrastructure
 
@@ -222,6 +229,8 @@ From laptop/browser:
 3. `http://PUBLIC_IP:8000` should NOT be reachable
 4. `http://PUBLIC_IP:8080` should NOT be reachable
 
+Same IP, same website: the public app URL should be the Elastic IP itself on port 80, for example `http://52.2.3.30`. Streamlit is meant to stay local to the VM and be reached by Nginx only.
+
 ## 11) Reuse in Another AWS Account
 
 Usually only these values change:
@@ -233,6 +242,98 @@ Usually only these values change:
 6. `.env` app secrets and DB config
 
 Terraform code remains the same.
+
+## 11.1) Multi-Developer Access (No Shared PEM) — Recommended
+
+Use IAM + Session Manager so each developer has their own identity and audit trail.
+
+1. Ensure Terraform enables Session Manager policy on EC2 role:
+
+```hcl
+enable_ssm_access = true
+```
+
+2. Apply Terraform:
+
+```bash
+cd terraform
+terraform apply -auto-approve
+```
+
+3. Give each developer IAM permissions for Session Manager.
+Minimum actions:
+1. `ssm:StartSession`
+2. `ssm:TerminateSession`
+3. `ssm:ResumeSession`
+4. `ssm:DescribeSessions`
+5. `ssm:GetConnectionStatus`
+6. `ec2:DescribeInstances`
+
+Copy-paste least-privilege policy template (replace placeholders first):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeForSessionManager",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ssm:DescribeSessions",
+        "ssm:GetConnectionStatus"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StartSessionOnTargetInstance",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/<INSTANCE_ID>",
+        "arn:aws:ssm:<REGION>::document/SSM-SessionManagerRunShell",
+        "arn:aws:ssm:<REGION>::document/AWS-StartInteractiveCommand"
+      ]
+    },
+    {
+      "Sid": "ManageOwnSessionsOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:session/${aws:userid}-*"
+    }
+  ]
+}
+```
+
+Attach this policy to a developer IAM group (recommended) instead of individual users.
+If your session IDs do not match `${aws:userid}-*`, temporarily set `ManageOwnSessionsOnly.Resource` to `*`, validate access, then tighten again.
+
+4. Developers start session from local machine:
+
+```bash
+aws ssm start-session --target <INSTANCE_ID> --region us-east-1
+```
+
+5. After all developers can connect via SSM, disable SSH ingress:
+
+```hcl
+enable_ssh_ingress = false
+```
+
+Then apply:
+
+```bash
+cd terraform
+terraform apply -auto-approve
+```
+
+Result:
+1. No shared PEM key for day-to-day work
+2. Per-user IAM access and revocation
+3. Better auditability
 
 ## 12) Cleanup
 
@@ -254,6 +355,96 @@ Optional key cleanup:
 3. `t3.micro` is a good low-cost starting point.
 4. Tighten `ssh_allowed_cidr` to reduce risk.
 5. Add ALB/HTTPS/autoscaling later only when required.
+
+## 13.1) Simple Security Plan (Do This In Order)
+
+Use this practical order for this project:
+
+Step 1 (now): Tighten Security Group.
+1. Keep port `80` open (website stays public).
+2. Keep port `22` restricted to one trusted admin IP (or disable later).
+3. Keep `8000`, `8501`, `8080` closed.
+Why:
+1. Website keeps working on the same public IP.
+2. Internal services stay private.
+3. This is the fastest security improvement with no architecture change.
+
+Step 2 (when ready): Add HTTPS.
+1. Move from `http://` to `https://`.
+2. Redirect HTTP to HTTPS.
+Why:
+1. Encrypts user data and passwords in transit.
+2. Removes browser "Not Secure" warning.
+
+Step 3 (later, advanced): ALB + private EC2 + NAT.
+1. Public ALB receives internet traffic.
+2. EC2 runs in private subnet (no public IP).
+3. NAT provides outbound internet for private EC2.
+Why:
+1. Internet cannot hit EC2 directly.
+2. Stronger long-term security and scaling model.
+
+Cost note:
+1. Step 1 is mostly configuration (lowest cost impact).
+2. Step 2 can be low cost (domain and certificate setup effort).
+3. Step 3 is stronger but adds AWS recurring cost (ALB/NAT).
+
+## 13.2) Tighten Security Group (Immediate, Practical Now)
+
+Apply this now for your current single-EC2 deployment.
+
+Inbound rules:
+1. Allow TCP `80` from `0.0.0.0/0` (public website via Nginx).
+2. Allow TCP `22` only from your admin IP `/32` (or disable SSH after SSM migration).
+3. Do not allow inbound `8000`, `8501`, `8080`.
+
+Outbound rules:
+1. Keep default allow-all outbound for now.
+
+Terraform mapping in this repo:
+1. `ssh_allowed_cidr` controls SSH source.
+2. `enable_ssh_ingress` toggles SSH rule on/off.
+3. Security Group intentionally exposes `80` only for app traffic.
+
+Validation commands:
+```bash
+# Public app must respond on 80
+curl -sS -o /dev/null -w "%{http_code}\n" http://PUBLIC_IP
+
+# These must not be publicly reachable
+curl -sS -o /dev/null -w "%{http_code}\n" http://PUBLIC_IP:8501 --connect-timeout 8 || true
+curl -sS -o /dev/null -w "%{http_code}\n" http://PUBLIC_IP:8000 --connect-timeout 8 || true
+```
+
+Expected:
+1. Port `80` returns `200`.
+2. Ports `8501` and `8000` time out or fail.
+
+## 13.3) Additional Security Checklist (Practical)
+
+Use this checklist after Step 1/Step 2 are stable.
+
+Secrets and credentials:
+1. Never commit `.env`, PEM keys, DB passwords, API keys, or tokens to git.
+2. Rotate DB and API credentials periodically.
+3. Prefer IAM role access on EC2 over long-lived static AWS keys.
+
+Server hardening:
+1. Keep OS security updates current.
+2. Keep Docker engine and images updated.
+3. Remove/disable unused services and unused public ports.
+4. Keep Airflow profile off unless needed for active work.
+5. Keep IAM permissions least-privilege.
+
+Monitoring and alerting:
+1. Add a basic uptime check for the public URL.
+2. Add EC2 alerts for stop/failure/high CPU.
+3. Review application logs regularly, especially failed login/auth patterns.
+
+Web-layer protections (gradual):
+1. Add Nginx rate limiting for login/API-sensitive endpoints.
+2. Add security headers (for example HSTS, X-Frame-Options, and related browser protections).
+3. If SSH remains enabled, optionally add fail2ban for brute-force protection.
 
 ## 14) Run Checklist
 

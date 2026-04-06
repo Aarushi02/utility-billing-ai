@@ -86,6 +86,8 @@ Browser → http://52.2.3.30 (port 80)
         [Streamlit container] — port 8501 — internal Docker network only
 ```
 
+Same IP, same website: users should open the app at `http://52.2.3.30` only; Nginx is the public entry point and Streamlit stays private on the VM.
+
 **The critical fix — why `127.0.0.1` was wrong:**
 ```nginx
 # ❌ WRONG — 127.0.0.1 inside Nginx container = Nginx itself, NOT Streamlit

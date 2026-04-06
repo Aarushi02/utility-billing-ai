@@ -3,7 +3,7 @@
 This runbook covers three services for production deployment:
 
 1. FastAPI backend (`api`) — internal only, not public
-2. Streamlit frontend (`streamlit`) — served via Nginx, not directly public
+2. Streamlit frontend (`streamlit`) — served via Nginx and bound to localhost on the VM, not directly public
 3. Nginx reverse proxy (`nginx`) — the only public entry point on port 80
 
 Airflow is intentionally out of scope in this guide (disabled by default via Docker Compose profiles).
@@ -17,7 +17,7 @@ Airflow is intentionally out of scope in this guide (disabled by default via Doc
 - Ports needed:
   - `80` for Nginx (public — only port open in Security Group)
   - `8000` for API (internal only — bound to `127.0.0.1`)
-  - `8501` for Streamlit (internal only — accessed via Nginx)
+     - `8501` for Streamlit (internal only — bound to `127.0.0.1` on the VM and accessed via Nginx)
 
 ---
 
@@ -94,7 +94,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build ap
 
 The `docker-compose.prod.yml` overrides:
 - API: bound to `127.0.0.1:8000` only
-- Streamlit: `ports: []` — no direct public port
+- Streamlit: `ports: []` in production; the base compose also binds Streamlit to `127.0.0.1:8501` so it stays local to the VM if someone starts the app without prod overrides
 - Nginx: added as a service on `0.0.0.0:80`
 
 ---
@@ -154,6 +154,8 @@ From browser:
 - `http://52.2.3.30` → should load Streamlit app (via Nginx)
 - `http://52.2.3.30:8501` → should NOT be reachable (port blocked by Security Group)
 - `http://52.2.3.30:8000` → should NOT be reachable
+
+Same IP, same website: users keep using the Elastic IP, but the website is meant to be opened only at `http://52.2.3.30` on port `80`.
 
 ---
 

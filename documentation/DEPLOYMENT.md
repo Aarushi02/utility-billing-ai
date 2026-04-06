@@ -44,10 +44,12 @@ Browser → http://<EC2_IP> (port 80)
               ↓
          Nginx container     — only public port (80)
               ↓ proxy_pass http://streamlit:8501
-         Streamlit container — internal Docker network only
+      Streamlit container — internal Docker network only, bound to localhost on the VM
               ↓ http://api:8000
          API container       — internal only
 ```
+
+Same IP, same website: the app should be opened only at the Elastic IP on port 80, for example `http://52.2.3.30`.
 
 **Key security points:**
 - Streamlit is **NOT** directly public — Nginx proxies all traffic
@@ -122,6 +124,8 @@ From browser:
 1. `http://<EC2_PUBLIC_IP>` — works (Nginx on port 80)
 2. `http://<EC2_PUBLIC_IP>:8501` — should NOT be reachable (blocked by Security Group)
 3. `http://<EC2_PUBLIC_IP>:8000` — should NOT be reachable
+
+If you redeploy and still see port 8501 published locally in `docker compose ps`, recreate the containers from the updated repo. The hardened state is `http://<EC2_PUBLIC_IP>` only.
 
 ---
 
@@ -221,3 +225,27 @@ Enable Airflow (when needed):
 ```bash
 docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile airflow up -d
 ```
+
+---
+
+## F) Simple Security Plan (Non-Technical)
+
+Use this order:
+
+1. Step 1 now: tighten Security Group.
+  - Keep website port `80` open.
+  - Keep admin port `22` limited to one trusted IP.
+  - Keep `8000`, `8501`, and `8080` closed publicly.
+
+2. Step 2 next: add HTTPS.
+  - Move site from `http://` to `https://`.
+  - Redirect HTTP to HTTPS.
+
+3. Step 3 later: move to ALB + private EC2 + NAT.
+  - Public traffic hits ALB.
+  - App server has no public IP.
+
+Why this order:
+1. Step 1 gives quick protection with almost no cost impact.
+2. Step 2 protects user data in transit.
+3. Step 3 is the strongest pattern but adds recurring AWS cost.

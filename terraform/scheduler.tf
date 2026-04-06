@@ -240,7 +240,7 @@ resource "aws_scheduler_schedule" "ec2_start" {
   schedule_expression_timezone = "America/New_York"
 
   flexible_time_window {
-    mode = "OFF"  # Fire exactly on time, no flexibility window
+    mode = "OFF" # Fire exactly on time, no flexibility window
   }
 
   target {

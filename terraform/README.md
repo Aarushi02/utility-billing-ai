@@ -12,6 +12,7 @@ What it creates:
 4. One Elastic IP (optional)
 5. Optional IAM policy for an existing S3 bucket
 6. Optional first-boot Docker bootstrap on EC2
+7. Optional Session Manager access policy (recommended for teams)
 
 What it intentionally does not create:
 1. New S3 bucket
@@ -39,6 +40,7 @@ What it intentionally does not create:
 	1. Security Group
 	2. IAM role
 	3. IAM inline policy for existing S3 bucket access
+	4. Optional managed policy attachment for Session Manager (`AmazonSSMManagedInstanceCore`)
 	4. IAM instance profile
 	5. EC2 instance
 	6. Elastic IP (optional)
@@ -78,10 +80,11 @@ Execution flow:
 
 ## Security Choices in This Setup
 
-1. SSH only from configured CIDR on port 22.
-2. Streamlit exposed on port 8501.
-3. API and Airflow are kept private by compose localhost binding.
-4. IMDSv2 is enforced on EC2 metadata service.
+1. Public HTTP entry is port 80 via Nginx.
+2. API and Airflow are kept private by compose localhost binding.
+3. SSH ingress on port 22 is optional via `enable_ssh_ingress`.
+4. Session Manager access is optional via `enable_ssm_access` and recommended for teams.
+5. IMDSv2 is enforced on EC2 metadata service.
 
 ## Cost Choices in This Setup
 
@@ -101,6 +104,9 @@ cp terraform.tfvars.example terraform.tfvars
 terraform init
 terraform plan
 terraform apply -auto-approve
+
+# start a shell session without PEM (requires enable_ssm_access=true)
+aws ssm start-session --target <INSTANCE_ID> --region <AWS_REGION>
 ```
 
 Destroy:
@@ -115,3 +121,5 @@ terraform destroy -auto-approve
 1. If user_data changes are not reflected, run a new apply and verify instance recreation policy for your changes.
 2. If permissions fail with UnauthorizedOperation, fix IAM policy and rerun plan.
 3. If key pair errors appear, verify key name exists in the target AWS region.
+4. For multi-developer teams, use IAM + Session Manager and avoid sharing PEM files.
+5. After Session Manager is validated, set `enable_ssh_ingress = false` and apply.
