@@ -10,6 +10,9 @@
 
 set -euo pipefail
 
+# Ensure AWS CLI is found regardless of how the script is invoked
+export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
+
 PROJECT="utility-billing-ai"
 ENVIRONMENT="${1:-prod}"
 REGION="${AWS_DEFAULT_REGION:-us-east-2}"
