@@ -345,7 +345,7 @@ docker compose up -d --build api streamlit
 ```
 
 ### **Production (AWS EC2 — already deployed)**
-- Public URL: `http://52.2.3.30` *(via Nginx on port 80)*
+- Public URL: `http://3.12.193.9` *(via Nginx on port 80)*
 - Infra provisioned via Terraform (`terraform/`)
 - See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for full setup guide
 
@@ -404,7 +404,7 @@ dev branch  ──► pull request ──► merge to main
                             GitHub Actions triggers
                                       │
                                       ▼
-                            SSH into EC2 (52.2.3.30)
+                            SSH into EC2 (3.12.193.9)
                                       │
                                       ▼
                       git fetch + git reset --hard origin/main
@@ -419,7 +419,7 @@ Go to your repo → **Settings → Secrets and variables → Actions → New rep
 
 | Secret Name | Value |
 |-------------|-------|
-| `EC2_HOST` | `52.2.3.30` *(update if IP changes after terraform destroy+apply)* |
+| `EC2_HOST` | `3.12.193.9` *(update if IP changes after terraform destroy+apply)* |
 | `EC2_USER` | `ubuntu` |
 | `EC2_SSH_KEY` | Full contents of `~/Desktop/utility-billing-key.pem` |
 
@@ -569,7 +569,7 @@ s3://<bucket-name>/
                            │ HTTP port 80 (public)
                            ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│           EC2 Instance  ──  Elastic IP: 52.2.3.30               │
+│           EC2 Instance  ──  Elastic IP: 3.12.193.9               │
 │           AMI: Ubuntu 24.04 LTS  |  t3.micro  |  us-east-1      │
 │           Disk: 20GB gp3  |  RAM: 1GB  |  Swap: 2GB             │
 │           Security Group: port 22 (your IP) + port 80 (public)  │
@@ -789,7 +789,7 @@ aws ec2 describe-instances \
   --output text
 ```
 
-> ✅ After starting, open **`http://52.2.3.30`** — app is live once containers boot (~60 sec).
+> ✅ After starting, open **`http://3.12.193.9`** — app is live once containers boot (~60 sec).
 
 ---
 
@@ -798,11 +798,11 @@ aws ec2 describe-instances \
 | Item | When Stopped | When Started Again |
 |------|-------------|-------------------|
 | EC2 Instance | Stopped (NOT terminated) | Starts fresh |
-| Elastic IP (`52.2.3.30`) | **Kept** — reserved for you | **Same IP** ✅ |
+| Elastic IP (`3.12.193.9`) | **Kept** — reserved for you | **Same IP** ✅ |
 | Disk / repo / `.env` | **Kept** — disk preserved | **Same files** ✅ |
 | Docker containers | Stopped gracefully | **Auto-restart** (`restart: unless-stopped`) ✅ |
 | Database data | **Kept** — lives on disk | **Same data** ✅ |
-| App URL | Offline (connection refused) | Back at `http://52.2.3.30` ✅ |
+| App URL | Offline (connection refused) | Back at `http://3.12.193.9` ✅ |
 
 ---
 
@@ -962,28 +962,28 @@ aws scheduler get-schedule --region us-east-1 --name utility-billing-ai-prod-ec2
 
 ```bash
 # ── SSH into EC2 ─────────────────────────────────────────────────────────────
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9
 
 # ── Check all containers are running ─────────────────────────────────────────
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
   "cd ~/utility-billing-ai && docker compose -f docker-compose.yml -f docker-compose.prod.yml ps"
 
 # ── Start all services manually (if containers stopped) ──────────────────────
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
   "cd ~/utility-billing-ai && \
    docker compose -f docker-compose.yml -f docker-compose.prod.yml \
    up -d api streamlit nginx"
 
 # ── View live logs ────────────────────────────────────────────────────────────
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
   "cd ~/utility-billing-ai && docker compose logs -f --tail=50"
 
 # ── API health check ──────────────────────────────────────────────────────────
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 \
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
   "curl -sS http://127.0.0.1:8000/api/v1/health/live"
 
 # ── Check memory and swap ─────────────────────────────────────────────────────
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30 "free -h"
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 "free -h"
 ```
 
 ### 🏗️ Terraform
@@ -1013,7 +1013,7 @@ terraform destroy
 
 ---
 
-**Last Updated**: March 19, 2026 | **Version**: 1.5.0 | **Status**: ✅ Production Ready — AWS EC2 @ http://52.2.3.30 | Scheduler: DISABLED (manual start/stop active)
+**Last Updated**: March 19, 2026 | **Version**: 1.5.0 | **Status**: ✅ Production Ready — AWS EC2 @ http://3.12.193.9 | Scheduler: DISABLED (manual start/stop active)
 
 <div align="center">
 

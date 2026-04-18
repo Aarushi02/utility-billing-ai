@@ -67,7 +67,7 @@ docker compose down
 Traffic flow with Nginx:
 
 ```
-Browser → http://52.2.3.30 (port 80)
+Browser → http://3.12.193.9 (port 80)
               ↓
          [Nginx container]   — only public entry point
               ↓ proxy_pass http://streamlit:8501
@@ -151,11 +151,11 @@ curl -sS -o /dev/null -w "HTTP Status: %{http_code}\n" http://127.0.0.1:80
 ```
 
 From browser:
-- `http://52.2.3.30` → should load Streamlit app (via Nginx)
-- `http://52.2.3.30:8501` → should NOT be reachable (port blocked by Security Group)
-- `http://52.2.3.30:8000` → should NOT be reachable
+- `http://3.12.193.9` → should load Streamlit app (via Nginx)
+- `http://3.12.193.9:8501` → should NOT be reachable (port blocked by Security Group)
+- `http://3.12.193.9:8000` → should NOT be reachable
 
-Same IP, same website: users keep using the Elastic IP, but the website is meant to be opened only at `http://52.2.3.30` on port `80`.
+Same IP, same website: users keep using the Elastic IP, but the website is meant to be opened only at `http://3.12.193.9` on port `80`.
 
 ---
 

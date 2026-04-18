@@ -2,8 +2,8 @@
 **Project:** Utility Billing AI
 **Server:** AWS EC2 t3.micro — `us-east-1`
 **Last Updated:** 2026-03-19
-**Current Public IP:** `52.2.3.30`
-**App URL:** `http://52.2.3.30` *(via Nginx on port 80)*
+**Current Public IP:** `3.12.193.9`
+**App URL:** `http://3.12.193.9` *(via Nginx on port 80)*
 
 > **IP NOTE:** Elastic IP is released when `terraform destroy` runs. AWS assigns a new one on next `terraform apply`.
 > To avoid IP change: never destroy — only stop the EC2 instance.
@@ -79,14 +79,14 @@ With 2GB swap:  RAM fills → overflow to disk → slower but stays alive
 
 **Architecture:**
 ```
-Browser → http://52.2.3.30 (port 80)
+Browser → http://3.12.193.9 (port 80)
            ↓
         [Nginx container] — port 80 — only public entry point
            ↓ proxy_pass http://streamlit:8501
         [Streamlit container] — port 8501 — internal Docker network only
 ```
 
-Same IP, same website: users should open the app at `http://52.2.3.30` only; Nginx is the public entry point and Streamlit stays private on the VM.
+Same IP, same website: users should open the app at `http://3.12.193.9` only; Nginx is the public entry point and Streamlit stays private on the VM.
 
 **The critical fix — why `127.0.0.1` was wrong:**
 ```nginx
@@ -154,7 +154,7 @@ services:
 - [x] DB initialized: `docker compose exec -T api python -m src.database.init_db`
 - [x] API health check: `{"status":"ok"}` ✅
 - [x] Nginx HTTP check: `HTTP Status: 200` ✅
-- [x] App live at: **`http://52.2.3.30`** ✅
+- [x] App live at: **`http://3.12.193.9`** ✅
 
 ---
 
@@ -192,12 +192,12 @@ EventBridge Scheduler → America/New_York timezone → DST handled automaticall
 ### 11. Manual Start / Stop (Current Active Mode)
 
 - [x] EC2 started/stopped manually via AWS CLI — no scheduler dependency
-- [x] Elastic IP retained on stop — same IP `52.2.3.30` every time
+- [x] Elastic IP retained on stop — same IP `3.12.193.9` every time
 - [x] Docker containers auto-restart on EC2 boot (`restart: unless-stopped`)
 
 **Daily commands:**
 ```bash
-# Start EC2 (app live in ~60 sec at http://52.2.3.30)
+# Start EC2 (app live in ~60 sec at http://3.12.193.9)
 aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
 
 # Stop EC2 (IP + data preserved)
@@ -235,7 +235,7 @@ aws scheduler update-schedule --region us-east-1 --name utility-billing-ai-prod-
 
 ### Phase 2 — HTTPS / SSL / Domain *(Next step after current deploy is stable)*
 
-Right now the app runs on plain HTTP (`http://52.2.3.30`). To make it production-secure:
+Right now the app runs on plain HTTP (`http://3.12.193.9`). To make it production-secure:
 
 | Option | What it needs | Cost |
 |--------|---------------|------|
@@ -245,7 +245,7 @@ Right now the app runs on plain HTTP (`http://52.2.3.30`). To make it production
 
 **Recommended path:**
 1. Get a domain (or use a free subdomain)
-2. Point DNS `A record` → `52.2.3.30`
+2. Point DNS `A record` → `3.12.193.9`
 3. Run Certbot on EC2 → auto-issues free SSL cert
 4. Update Nginx to listen on 443, redirect HTTP → HTTPS
 
@@ -309,7 +309,7 @@ curl -I http://127.0.0.1:80
 
 ```bash
 # SSH into EC2
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9
 
 # Check memory + swap
 free -h && swapon --show

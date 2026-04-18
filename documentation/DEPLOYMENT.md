@@ -49,7 +49,7 @@ Browser → http://<EC2_IP> (port 80)
          API container       — internal only
 ```
 
-Same IP, same website: the app should be opened only at the Elastic IP on port 80, for example `http://52.2.3.30`.
+Same IP, same website: the app should be opened only at the Elastic IP on port 80, for example `http://3.12.193.9`.
 
 **Key security points:**
 - Streamlit is **NOT** directly public — Nginx proxies all traffic

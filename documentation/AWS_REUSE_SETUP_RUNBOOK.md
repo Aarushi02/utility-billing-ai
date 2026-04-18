@@ -229,7 +229,7 @@ From laptop/browser:
 3. `http://PUBLIC_IP:8000` should NOT be reachable
 4. `http://PUBLIC_IP:8080` should NOT be reachable
 
-Same IP, same website: the public app URL should be the Elastic IP itself on port 80, for example `http://52.2.3.30`. Streamlit is meant to stay local to the VM and be reached by Nginx only.
+Same IP, same website: the public app URL should be the Elastic IP itself on port 80, for example `http://3.12.193.9`. Streamlit is meant to stay local to the VM and be reached by Nginx only.
 
 ## 11) Reuse in Another AWS Account
 
@@ -484,7 +484,25 @@ Validation:
 [ ] Airflow port 8080 not publicly exposed
 [ ] Swap space present: `free -h` shows Swap: 2.0Gi
 
-## 15) Update Log (Keep This Section Growing)
+## 15) Disaster Recovery
+
+If the EC2 or Elastic IP was deleted outside Terraform and you need to rebuild:
+
+See full step-by-step guide: [documentation/DISASTER_RECOVERY_RUNBOOK.md](DISASTER_RECOVERY_RUNBOOK.md)
+
+Summary:
+1. Find what actually exists in AWS (check both regions)
+2. Fix `aws_region` in `terraform.tfvars` and `variables.tf` if drifted
+3. Import surviving resources (SG, Lambdas, EventBridge schedules) into Terraform state
+4. Run `terraform apply` — recreates EC2 + new Elastic IP automatically
+5. Wait for Docker bootstrap (~2 min), then push `.env` via SSM
+6. Clone repo + `docker compose up` + `init_db` via SSM
+7. Update new IP in all docs with `sed`
+8. Terminate old orphan instances and release old Elastic IPs
+
+---
+
+## 16) Update Log (Keep This Section Growing)
 
 Use this section to append future steps without deleting old decisions.
 
@@ -495,6 +513,63 @@ Template:
 4. Commands used:
 5. Validation done:
 
+### 2026-04-18 (Session 3 — Region Fix + State Recovery + Full Redeploy)
+
+1. Change made:
+- Discovered EC2 (`i-062af6acd1aee569f`) had been deleted in `us-east-1` — Terraform state was stale
+- Actual running instance (`i-00dde7fe51842ef49`) was in `us-east-2` — manually created, not Terraform-managed
+- Fixed region: changed `aws_region` to `us-east-2` in `terraform.tfvars` and `variables.tf`
+- Imported surviving resources (SG, Lambdas, EventBridge schedules) into Terraform state
+- Ran `terraform apply` — created new EC2 (`i-0393dd4f827866db2`) + new EIP (`3.12.193.9`)
+- Pushed `.env` to EC2 via SSM base64 method (no SSH key needed)
+- Fixed `.env` — commented out `OPENAI_API_KEY_T&B` and `General_Purpose_API_T&B` (Docker can't parse `&` in variable names)
+- Deployed app: git clone → docker compose up (api + streamlit + nginx) → init_db
+- Terminated orphan instance (`i-00dde7fe51842ef49`) and released orphan EIP (`3.16.202.230`)
+- Updated new IP (`3.12.193.9`) across all docs
+- Created [DISASTER_RECOVERY_RUNBOOK.md](DISASTER_RECOVERY_RUNBOOK.md)
+
+2. Why:
+- Original `us-east-1` EC2 was deleted outside Terraform — state drift
+- Someone manually created a replacement in `us-east-2` without updating Terraform
+- Key pair only existed in `us-east-2` so region had to follow
+
+3. Commands used:
+```bash
+# Fix region
+sed -i '' 's/us-east-1/us-east-2/' terraform/terraform.tfvars
+
+# Import surviving resources
+terraform import aws_security_group.app sg-09aa1dec3d81c3885
+terraform import "aws_lambda_function.ec2_start[0]" utility-billing-ai-prod-ec2-start
+terraform import "aws_lambda_function.ec2_stop[0]" utility-billing-ai-prod-ec2-stop
+terraform import "aws_scheduler_schedule.ec2_start[0]" default/utility-billing-ai-prod-ec2-start
+terraform import "aws_scheduler_schedule.ec2_stop[0]" default/utility-billing-ai-prod-ec2-stop
+
+# Apply
+cd terraform && terraform apply -auto-approve
+
+# Push .env via SSM base64
+ENV_B64=$(base64 -i .env | tr -d '\n')
+aws ssm send-command --instance-ids i-0393dd4f827866db2 ...
+
+# Deploy
+aws ssm send-command --instance-ids i-0393dd4f827866db2 \
+  --parameters 'commands=["git clone ...", "docker compose up ...", "init_db ..."]'
+
+# Cleanup orphans
+aws ec2 terminate-instances --instance-ids i-00dde7fe51842ef49
+aws ec2 release-address --allocation-id eipalloc-08d6a1e931fa54716
+```
+
+4. Validation done:
+- New EC2 running with Terraform-managed EIP `3.12.193.9` ✅
+- Docker bootstrap confirmed ✅
+- App deploying via SSM ✅
+- All docs updated with new IP ✅
+- Orphan instance terminated, orphan EIP released ✅
+
+---
+
 ### 2026-03-18 (Session 2 — Nginx + Swap + Full Redeploy)
 
 1. Change made:
@@ -503,7 +578,7 @@ Template:
 - Fixed `proxy_pass` in `nginx.conf` to use Docker service name `http://streamlit:8501` (not `127.0.0.1`)
 - Disabled Airflow via Docker Compose `profiles: [airflow]` — prevents accidental Airflow image pull
 - Security Group updated: port 80 open (Nginx), port 8501 removed
-- Terraform destroy + rebuild: new EC2 (`i-06ebc19f707862bdd`), new IP (`52.2.3.30`)
+- Terraform destroy + rebuild: new EC2 (`i-06ebc19f707862bdd`), new IP (`3.12.193.9`)
 - Full deployment: clone → .env → docker compose up (api + streamlit + nginx) → init_db
 
 2. Why:
@@ -519,10 +594,10 @@ terraform destroy -auto-approve
 terraform apply -auto-approve
 
 # Copy .env to new EC2
-scp -i ~/Desktop/utility-billing-key.pem .env ubuntu@52.2.3.30:~/.env
+scp -i ~/Desktop/utility-billing-key.pem .env ubuntu@3.12.193.9:~/.env
 
 # Deploy on EC2
-ssh -i ~/Desktop/utility-billing-key.pem ubuntu@52.2.3.30
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9
 git clone -b Dev https://github.com/harshalsp0011/utility-billing-ai.git ~/utility-billing-ai
 cp ~/.env ~/utility-billing-ai/.env
 cd ~/utility-billing-ai
@@ -536,7 +611,7 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api pyth
 - All 3 containers Up and healthy ✅
 - API health: `{"status":"ok"}` ✅
 - Nginx HTTP status: 200 ✅
-- App live at `http://52.2.3.30` ✅
+- App live at `http://3.12.193.9` ✅
 
 ### 2026-03-13 (Session 1 — Initial Setup)
 
