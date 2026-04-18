@@ -10,7 +10,13 @@ echo '/swapfile none swap sw 0 0' >> /etc/fstab
 
 # Keep package lists fresh and install baseline tools.
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg git
+apt-get install -y ca-certificates curl gnupg git unzip
+
+# Install AWS CLI v2 (needed for fetch_secrets.sh to pull .env from SSM).
+curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp/
+/tmp/aws/install
+rm -rf /tmp/awscliv2.zip /tmp/aws
 
 # Install Docker official apt repository.
 install -m 0755 -d /etc/apt/keyrings
