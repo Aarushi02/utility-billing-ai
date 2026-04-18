@@ -152,7 +152,7 @@ resource "aws_instance" "app" {
   instance_type          = var.instance_type
   key_name               = var.ssh_key_name
   subnet_id              = element(data.aws_subnets.default.ids, 0)
-  vpc_security_group_ids = [aws_security_group.app.id]
+  vpc_security_group_ids = [aws_security_group.app.id, var.rds_security_group_id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   # Phase 2: install Docker and Docker Compose plugin automatically on first boot.
   user_data = var.enable_docker_bootstrap ? local.docker_bootstrap_user_data : null

@@ -87,6 +87,13 @@ variable "ec2_admin_user" {
   default     = "ubuntu"
 }
 
+# Existing RDS security group that allows EC2 → RDS connectivity.
+variable "rds_security_group_id" {
+  description = "Existing security group ID (ec2-rds-1) that allows EC2 to connect to RDS"
+  type        = string
+  default     = ""
+}
+
 # Existing bucket only: Terraform will attach IAM policy, not create a bucket.
 variable "existing_s3_bucket_name" {
   description = "Existing S3 bucket name used by the app (no bucket creation in Terraform)"
