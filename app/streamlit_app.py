@@ -60,6 +60,7 @@ st.set_page_config(
 
 from app.components.home import check_authentication, logout
 from app.components.login import render_login_page
+from app.components.portal import render_portal
 from app.components.dashboard import render_dashboard
 from app.components.usage_metrics import render as render_usage_metrics
 
@@ -83,6 +84,13 @@ initialize_backend()
 # -----------------------------------------------------
 if not check_authentication():
     render_login_page()
+    st.stop()
+
+# -----------------------------------------------------
+# SERVICE PORTAL (shown once after login, before dashboard)
+# -----------------------------------------------------
+if "selected_service" not in st.session_state:
+    render_portal()
     st.stop()
 
 # -----------------------------------------------------

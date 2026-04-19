@@ -30,11 +30,49 @@ services:
     environment:
       API_BASE_URL: http://api:8000
       LOG_SOURCE: streamlit
+      VA_STREAMLIT_URL: /va
     depends_on:
       api:
         condition: service_healthy
     ports:
       - "127.0.0.1:8501:8501"
+
+  va-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: utility-va-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://va-api:8001
+      LOG_SOURCE: va-api
+    ports:
+      - "127.0.0.1:8001:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health/live')\""]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  va-streamlit:
+    build:
+      context: .
+      dockerfile: app/Dockerfile
+    container_name: utility-va-streamlit
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      API_BASE_URL: http://va-api:8000
+      LOG_SOURCE: va-streamlit
+    depends_on:
+      va-api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8502:8501"
+    command: ["streamlit", "run", "streamlit_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.baseUrlPath=/va"]
 
   airflow:
     profiles:
