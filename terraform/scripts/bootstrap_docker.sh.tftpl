@@ -1,9 +1,22 @@
 #!/bin/bash
 set -euxo pipefail
 
+# Add 2GB swap so t3.micro does not crash under Docker memory pressure.
+fallocate -l 2G /swapfile
+chmod 600 /swapfile
+mkswap /swapfile
+swapon /swapfile
+echo '/swapfile none swap sw 0 0' >> /etc/fstab
+
 # Keep package lists fresh and install baseline tools.
 apt-get update -y
-apt-get install -y ca-certificates curl gnupg git
+apt-get install -y ca-certificates curl gnupg git unzip
+
+# Install AWS CLI v2 (needed for fetch_secrets.sh to pull .env from SSM).
+curl -s https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip -o /tmp/awscliv2.zip
+unzip -q /tmp/awscliv2.zip -d /tmp/
+/tmp/aws/install
+rm -rf /tmp/awscliv2.zip /tmp/aws
 
 # Install Docker official apt repository.
 install -m 0755 -d /etc/apt/keyrings
@@ -22,6 +35,30 @@ systemctl start docker
 
 # Allow configured admin user to run docker without sudo (after re-login).
 usermod -aG docker ${ec2_admin_user}
+
+# Install systemd service that auto-fetches SSM secrets + starts Docker Compose on every boot.
+# This runs after the Lambda scheduler starts the instance — no manual intervention needed.
+cat > /etc/systemd/system/utility-billing-startup.service << 'UNIT'
+[Unit]
+Description=Fetch SSM secrets and start Utility Billing Docker Compose
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=${ec2_admin_user}
+WorkingDirectory=/home/${ec2_admin_user}/utility-billing-ai
+ExecStart=/bin/bash /home/${ec2_admin_user}/utility-billing-ai/scripts/fetch_and_start.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable utility-billing-startup.service
 
 # Write marker file for quick verification.
 echo "Docker bootstrap completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /var/log/docker-bootstrap.done

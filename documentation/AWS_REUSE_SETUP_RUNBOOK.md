@@ -121,6 +121,11 @@ Verify:
 aws ec2 describe-key-pairs --region us-east-1 --query 'KeyPairs[].KeyName' --output text
 ```
 
+Team note:
+1. Do not share one PEM file across developers.
+2. Use PEM only as break-glass admin access.
+3. Primary shared workflow should be IAM + Session Manager.
+
 ## 6) Configure Terraform Variables
 
 Main file: [terraform/terraform.tfvars](terraform/terraform.tfvars)
@@ -141,6 +146,8 @@ curl -s https://checkip.amazonaws.com
 Set:
 1. `ssh_allowed_cidr = YOUR_IP/32`
 2. `streamlit_allowed_cidrs = ["0.0.0.0/0"]` during initial testing
+3. `enable_ssm_access = true`
+4. `enable_ssh_ingress = true` during migration, then `false` after Session Manager is validated
 
 ## 7) Phase 1: Create Infrastructure
 
@@ -181,25 +188,27 @@ Note: wait 30 to 90 seconds after first boot before validating.
 
 ## 9) Phase 3: Deploy Application on EC2
 
-Inside EC2:
+Inside EC2 (bootstrap already installed Docker + 2GB swap on first boot):
 
 ```bash
-sudo apt update -y
-sudo apt install -y git
-git clone YOUR_REPO_URL
-cd utility-billing-ai
+git clone -b Dev https://github.com/harshalsp0011/utility-billing-ai.git ~/utility-billing-ai
+cp ~/.env ~/utility-billing-ai/.env
+cd ~/utility-billing-ai
 ```
 
-Create `.env` with environment-specific values, then run:
+Start API + Streamlit + Nginx (production mode with both compose files):
 
 ```bash
-# Preferred (current plan): backend + streamlit only
-docker compose up -d --build api streamlit
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
+```
 
-# Optional later (if/when needed): include airflow
-# docker compose up -d --build api streamlit airflow
+**Do NOT run `docker compose up` without specifying services** — it would attempt to pull Airflow which exhausts t3.micro RAM.
 
-docker compose exec api python -m src.database.init_db
+To start Airflow when needed:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml --profile airflow up -d
 ```
 
 ## 10) Validate Runtime and Exposure
@@ -207,15 +216,20 @@ docker compose exec api python -m src.database.init_db
 From EC2:
 
 ```bash
+# API internal health
 curl -sS http://127.0.0.1:8000/api/v1/health/live
-curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8501
-curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8080
+
+# Nginx public entry point (port 80)
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:80
 ```
 
 From laptop/browser:
-1. `http://PUBLIC_IP:8501` should work
-2. `http://PUBLIC_IP:8000` should not be publicly reachable
-3. `http://PUBLIC_IP:8080` should not be publicly reachable
+1. `http://PUBLIC_IP` (port 80) should work — Nginx serves Streamlit
+2. `http://PUBLIC_IP:8501` should NOT be reachable — blocked by Security Group
+3. `http://PUBLIC_IP:8000` should NOT be reachable
+4. `http://PUBLIC_IP:8080` should NOT be reachable
+
+Same IP, same website: the public app URL should be the Elastic IP itself on port 80, for example `http://3.12.193.9`. Streamlit is meant to stay local to the VM and be reached by Nginx only.
 
 ## 11) Reuse in Another AWS Account
 
@@ -228,6 +242,98 @@ Usually only these values change:
 6. `.env` app secrets and DB config
 
 Terraform code remains the same.
+
+## 11.1) Multi-Developer Access (No Shared PEM) — Recommended
+
+Use IAM + Session Manager so each developer has their own identity and audit trail.
+
+1. Ensure Terraform enables Session Manager policy on EC2 role:
+
+```hcl
+enable_ssm_access = true
+```
+
+2. Apply Terraform:
+
+```bash
+cd terraform
+terraform apply -auto-approve
+```
+
+3. Give each developer IAM permissions for Session Manager.
+Minimum actions:
+1. `ssm:StartSession`
+2. `ssm:TerminateSession`
+3. `ssm:ResumeSession`
+4. `ssm:DescribeSessions`
+5. `ssm:GetConnectionStatus`
+6. `ec2:DescribeInstances`
+
+Copy-paste least-privilege policy template (replace placeholders first):
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "DescribeForSessionManager",
+      "Effect": "Allow",
+      "Action": [
+        "ec2:DescribeInstances",
+        "ssm:DescribeSessions",
+        "ssm:GetConnectionStatus"
+      ],
+      "Resource": "*"
+    },
+    {
+      "Sid": "StartSessionOnTargetInstance",
+      "Effect": "Allow",
+      "Action": "ssm:StartSession",
+      "Resource": [
+        "arn:aws:ec2:<REGION>:<ACCOUNT_ID>:instance/<INSTANCE_ID>",
+        "arn:aws:ssm:<REGION>::document/SSM-SessionManagerRunShell",
+        "arn:aws:ssm:<REGION>::document/AWS-StartInteractiveCommand"
+      ]
+    },
+    {
+      "Sid": "ManageOwnSessionsOnly",
+      "Effect": "Allow",
+      "Action": [
+        "ssm:TerminateSession",
+        "ssm:ResumeSession"
+      ],
+      "Resource": "arn:aws:ssm:<REGION>:<ACCOUNT_ID>:session/${aws:userid}-*"
+    }
+  ]
+}
+```
+
+Attach this policy to a developer IAM group (recommended) instead of individual users.
+If your session IDs do not match `${aws:userid}-*`, temporarily set `ManageOwnSessionsOnly.Resource` to `*`, validate access, then tighten again.
+
+4. Developers start session from local machine:
+
+```bash
+aws ssm start-session --target <INSTANCE_ID> --region us-east-1
+```
+
+5. After all developers can connect via SSM, disable SSH ingress:
+
+```hcl
+enable_ssh_ingress = false
+```
+
+Then apply:
+
+```bash
+cd terraform
+terraform apply -auto-approve
+```
+
+Result:
+1. No shared PEM key for day-to-day work
+2. Per-user IAM access and revocation
+3. Better auditability
 
 ## 12) Cleanup
 
@@ -249,6 +355,96 @@ Optional key cleanup:
 3. `t3.micro` is a good low-cost starting point.
 4. Tighten `ssh_allowed_cidr` to reduce risk.
 5. Add ALB/HTTPS/autoscaling later only when required.
+
+## 13.1) Simple Security Plan (Do This In Order)
+
+Use this practical order for this project:
+
+Step 1 (now): Tighten Security Group.
+1. Keep port `80` open (website stays public).
+2. Keep port `22` restricted to one trusted admin IP (or disable later).
+3. Keep `8000`, `8501`, `8080` closed.
+Why:
+1. Website keeps working on the same public IP.
+2. Internal services stay private.
+3. This is the fastest security improvement with no architecture change.
+
+Step 2 (when ready): Add HTTPS.
+1. Move from `http://` to `https://`.
+2. Redirect HTTP to HTTPS.
+Why:
+1. Encrypts user data and passwords in transit.
+2. Removes browser "Not Secure" warning.
+
+Step 3 (later, advanced): ALB + private EC2 + NAT.
+1. Public ALB receives internet traffic.
+2. EC2 runs in private subnet (no public IP).
+3. NAT provides outbound internet for private EC2.
+Why:
+1. Internet cannot hit EC2 directly.
+2. Stronger long-term security and scaling model.
+
+Cost note:
+1. Step 1 is mostly configuration (lowest cost impact).
+2. Step 2 can be low cost (domain and certificate setup effort).
+3. Step 3 is stronger but adds AWS recurring cost (ALB/NAT).
+
+## 13.2) Tighten Security Group (Immediate, Practical Now)
+
+Apply this now for your current single-EC2 deployment.
+
+Inbound rules:
+1. Allow TCP `80` from `0.0.0.0/0` (public website via Nginx).
+2. Allow TCP `22` only from your admin IP `/32` (or disable SSH after SSM migration).
+3. Do not allow inbound `8000`, `8501`, `8080`.
+
+Outbound rules:
+1. Keep default allow-all outbound for now.
+
+Terraform mapping in this repo:
+1. `ssh_allowed_cidr` controls SSH source.
+2. `enable_ssh_ingress` toggles SSH rule on/off.
+3. Security Group intentionally exposes `80` only for app traffic.
+
+Validation commands:
+```bash
+# Public app must respond on 80
+curl -sS -o /dev/null -w "%{http_code}\n" http://PUBLIC_IP
+
+# These must not be publicly reachable
+curl -sS -o /dev/null -w "%{http_code}\n" http://PUBLIC_IP:8501 --connect-timeout 8 || true
+curl -sS -o /dev/null -w "%{http_code}\n" http://PUBLIC_IP:8000 --connect-timeout 8 || true
+```
+
+Expected:
+1. Port `80` returns `200`.
+2. Ports `8501` and `8000` time out or fail.
+
+## 13.3) Additional Security Checklist (Practical)
+
+Use this checklist after Step 1/Step 2 are stable.
+
+Secrets and credentials:
+1. Never commit `.env`, PEM keys, DB passwords, API keys, or tokens to git.
+2. Rotate DB and API credentials periodically.
+3. Prefer IAM role access on EC2 over long-lived static AWS keys.
+
+Server hardening:
+1. Keep OS security updates current.
+2. Keep Docker engine and images updated.
+3. Remove/disable unused services and unused public ports.
+4. Keep Airflow profile off unless needed for active work.
+5. Keep IAM permissions least-privilege.
+
+Monitoring and alerting:
+1. Add a basic uptime check for the public URL.
+2. Add EC2 alerts for stop/failure/high CPU.
+3. Review application logs regularly, especially failed login/auth patterns.
+
+Web-layer protections (gradual):
+1. Add Nginx rate limiting for login/API-sensitive endpoints.
+2. Add security headers (for example HSTS, X-Frame-Options, and related browser protections).
+3. If SSH remains enabled, optionally add fail2ban for brute-force protection.
 
 ## 14) Run Checklist
 
@@ -282,11 +478,31 @@ App deployment:
 [ ] `init_db` command successful
 
 Validation:
-[ ] Streamlit public URL works on port 8501
+[ ] App public URL works at http://PUBLIC_IP (port 80 via Nginx)
 [ ] API port 8000 not publicly exposed
+[ ] Streamlit port 8501 not publicly exposed (Nginx handles it)
 [ ] Airflow port 8080 not publicly exposed
+[ ] Swap space present: `free -h` shows Swap: 2.0Gi
 
-## 15) Update Log (Keep This Section Growing)
+## 15) Disaster Recovery
+
+If the EC2 or Elastic IP was deleted outside Terraform and you need to rebuild:
+
+See full step-by-step guide: [documentation/DISASTER_RECOVERY_RUNBOOK.md](DISASTER_RECOVERY_RUNBOOK.md)
+
+Summary:
+1. Find what actually exists in AWS (check both regions)
+2. Fix `aws_region` in `terraform.tfvars` and `variables.tf` if drifted
+3. Import surviving resources (SG, Lambdas, EventBridge schedules) into Terraform state
+4. Run `terraform apply` — recreates EC2 + new Elastic IP automatically
+5. Wait for Docker bootstrap (~2 min), then push `.env` via SSM
+6. Clone repo + `docker compose up` + `init_db` via SSM
+7. Update new IP in all docs with `sed`
+8. Terminate old orphan instances and release old Elastic IPs
+
+---
+
+## 16) Update Log (Keep This Section Growing)
 
 Use this section to append future steps without deleting old decisions.
 
@@ -297,7 +513,149 @@ Template:
 4. Commands used:
 5. Validation done:
 
-### 2026-03-13 (Current Session)
+### 2026-04-18 (Session 3 — Region Fix + State Recovery + Full Redeploy)
+
+1. Change made:
+- Discovered EC2 (`i-062af6acd1aee569f`) had been deleted in `us-east-1` — Terraform state was stale
+- Actual running instance (`i-00dde7fe51842ef49`) was in `us-east-2` — manually created, not Terraform-managed
+- Fixed region: changed `aws_region` to `us-east-2` in `terraform.tfvars` and `variables.tf`
+- Imported surviving resources (SG, Lambdas, EventBridge schedules) into Terraform state
+- Ran `terraform apply` — created new EC2 (`i-0393dd4f827866db2`) + new EIP (`3.12.193.9`)
+- Pushed `.env` to EC2 via SSM base64 method (no SSH key needed)
+- Fixed `.env` — commented out `OPENAI_API_KEY_T&B` and `General_Purpose_API_T&B` (Docker can't parse `&` in variable names)
+- Deployed app: git clone → docker compose up (api + streamlit + nginx) → init_db
+- Terminated orphan instance (`i-00dde7fe51842ef49`) and released orphan EIP (`3.16.202.230`)
+- Updated new IP (`3.12.193.9`) across all docs
+- Created [DISASTER_RECOVERY_RUNBOOK.md](DISASTER_RECOVERY_RUNBOOK.md)
+
+2. Why:
+- Original `us-east-1` EC2 was deleted outside Terraform — state drift
+- Someone manually created a replacement in `us-east-2` without updating Terraform
+- Key pair only existed in `us-east-2` so region had to follow
+
+3. Commands used:
+```bash
+# Fix region
+sed -i '' 's/us-east-1/us-east-2/' terraform/terraform.tfvars
+
+# Import surviving resources
+terraform import aws_security_group.app sg-09aa1dec3d81c3885
+terraform import "aws_lambda_function.ec2_start[0]" utility-billing-ai-prod-ec2-start
+terraform import "aws_lambda_function.ec2_stop[0]" utility-billing-ai-prod-ec2-stop
+terraform import "aws_scheduler_schedule.ec2_start[0]" default/utility-billing-ai-prod-ec2-start
+terraform import "aws_scheduler_schedule.ec2_stop[0]" default/utility-billing-ai-prod-ec2-stop
+
+# Apply
+cd terraform && terraform apply -auto-approve
+
+# Push .env via SSM base64
+ENV_B64=$(base64 -i .env | tr -d '\n')
+aws ssm send-command --instance-ids i-0393dd4f827866db2 ...
+
+# Deploy
+aws ssm send-command --instance-ids i-0393dd4f827866db2 \
+  --parameters 'commands=["git clone ...", "docker compose up ...", "init_db ..."]'
+
+# Cleanup orphans
+aws ec2 terminate-instances --instance-ids i-00dde7fe51842ef49
+aws ec2 release-address --allocation-id eipalloc-08d6a1e931fa54716
+```
+
+4. Validation done:
+- New EC2 running with Terraform-managed EIP `3.12.193.9` ✅
+- Docker bootstrap confirmed ✅
+- App deploying via SSM ✅
+- All docs updated with new IP ✅
+- Orphan instance terminated, orphan EIP released ✅
+
+---
+
+### 2026-04-18 (Session 5 — Secrets Management, DB Migration, Auto-Fetch on Boot)
+
+1. Changes made:
+- Migrated all secrets from manual `.env` sharing to AWS SSM Parameter Store
+- Updated DB credentials: old Heroku RDS (us-east-1) → new RDS `database-1.cv8g6qea8dzl.us-east-2.rds.amazonaws.com`
+- Switched AWS account from Harshal's personal account to Troy & Banks account (`335971291843`)
+- `~/.aws/credentials` [default] now uses Troy & Banks keys; region set to `us-east-2`
+- Removed hardcoded AWS keys from `.env` — local dev uses AWS profile, EC2 uses IAM role
+- `DB_URL` removed from SSM — `config.py` builds it at runtime from individual DB_* fields
+- Fixed `extract_logic_llm_call.py` to not read `DB_URL` from env directly (used `get_engine` from db_utils)
+- Added systemd boot service `utility-billing-startup.service` — auto-fetches SSM secrets and starts Docker Compose on every EC2 start (including Lambda-triggered starts)
+- Added `scripts/fetch_and_start.sh` and `scripts/setup_autostart.sh`
+- Moved `RUNBOOK_DEPLOYMENT.md` from repo root → `documentation/RUNBOOK_DEPLOYMENT.md`
+
+2. Why:
+- Developers were sharing `.env` files manually — security risk
+- DB was pointing at old Heroku RDS; migrated to new AWS RDS in us-east-2
+- Lambda scheduler starts EC2 daily but containers were using stale secrets
+- All infra is in Troy & Banks account, so local tooling must match
+
+3. Commands used:
+```bash
+# Push updated secrets to SSM
+cd terraform && terraform apply -auto-approve
+
+# Verify DB creds on EC2
+aws ssm send-command --instance-ids i-0393dd4f827866db2 --document-name AWS-RunShellScript \
+  --parameters 'commands=["grep DB_ /home/ubuntu/utility-billing-ai/.env"]' --region us-east-2
+
+# Fetch latest secrets and restart Docker on EC2
+aws ssm send-command --instance-ids i-0393dd4f827866db2 --document-name AWS-RunShellScript \
+  --parameters 'commands=["cd /home/ubuntu/utility-billing-ai && ./scripts/fetch_secrets.sh && docker compose -f docker-compose.yml -f docker-compose.prod.yml down && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"]' --region us-east-2
+```
+
+4. Validation done:
+- Terraform apply: 4 SSM params updated, DB_URL param deleted ✅
+- EC2 .env shows new DB host `database-1.cv8g6qea8dzl.us-east-2.rds.amazonaws.com` ✅
+- All 3 containers Up and healthy after restart ✅
+- systemd `utility-billing-startup.service` enabled (auto-runs on every boot) ✅
+
+---
+
+### 2026-03-18 (Session 2 — Nginx + Swap + Full Redeploy)
+
+1. Change made:
+- Added 2GB swap to EC2 bootstrap script (prevents t3.micro OOM crash under Docker load)
+- Added Nginx reverse proxy — Streamlit no longer directly public; Nginx on port 80 handles all traffic
+- Fixed `proxy_pass` in `nginx.conf` to use Docker service name `http://streamlit:8501` (not `127.0.0.1`)
+- Disabled Airflow via Docker Compose `profiles: [airflow]` — prevents accidental Airflow image pull
+- Security Group updated: port 80 open (Nginx), port 8501 removed
+- Terraform destroy + rebuild: new EC2 (`i-06ebc19f707862bdd`), new IP (`3.12.193.9`)
+- Full deployment: clone → .env → docker compose up (api + streamlit + nginx) → init_db
+
+2. Why:
+- Previous EC2 froze due to RAM exhaustion — no swap + Airflow image pull
+- Streamlit on port 8501 was publicly accessible — Nginx adds security layer
+- `127.0.0.1` in nginx.conf referred to Nginx container itself, not Streamlit
+
+3. Commands used:
+```bash
+# Terraform rebuild
+cd terraform
+terraform destroy -auto-approve
+terraform apply -auto-approve
+
+# Copy .env to new EC2
+scp -i ~/Desktop/utility-billing-key.pem .env ubuntu@3.12.193.9:~/.env
+
+# Deploy on EC2
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9
+git clone -b Dev https://github.com/harshalsp0011/utility-billing-ai.git ~/utility-billing-ai
+cp ~/.env ~/utility-billing-ai/.env
+cd ~/utility-billing-ai
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
+```
+
+4. Validation done:
+- `free -h` shows Swap: 2.0Gi ✅
+- Docker 29.3.0 installed ✅
+- All 3 containers Up and healthy ✅
+- API health: `{"status":"ok"}` ✅
+- Nginx HTTP status: 200 ✅
+- App live at `http://3.12.193.9` ✅
+
+### 2026-03-13 (Session 1 — Initial Setup)
 
 1. Change made:
 - Provisioned Terraform infra successfully (EC2, SG, IAM role/profile, EIP).

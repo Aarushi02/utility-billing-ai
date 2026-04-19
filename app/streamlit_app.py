@@ -61,6 +61,7 @@ st.set_page_config(
 from app.components.home import check_authentication, logout
 from app.components.login import render_login_page
 from app.components.dashboard import render_dashboard
+from app.components.usage_metrics import render as render_usage_metrics
 
 # -----------------------------------------------------
 # CHECK BACKEND READINESS (ONCE PER SESSION)
@@ -154,6 +155,7 @@ page_icons = {
     "Generate Reports": "📋",
     "Savings Analysis": "💰",   # ← NEW
     "Upload History": "📜",
+    "Usage Metrics": "📈",
 }
 
 # -----------------------------------------------------
@@ -169,7 +171,8 @@ document.addEventListener('DOMContentLoaded', function() {
         '📋': 'Generate Reports',
         '📑': 'Manage Tariffs',
         '💰': 'Savings Analysis',
-        '📜': 'Upload History'
+        '📜': 'Upload History',
+        '📈': 'Usage Metrics',
     };
     setTimeout(() => {
         document.querySelectorAll('[data-baseweb="radio"] label').forEach(label => {
@@ -267,6 +270,8 @@ elif page == "Savings Analysis":
 elif page == "Upload History":
     from app.components.upload_history import render_upload_history
     render_upload_history()
+elif page == "Usage Metrics":
+    render_usage_metrics()
 
 # -----------------------------------------------------
 # FOOTER

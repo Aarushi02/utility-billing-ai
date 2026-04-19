@@ -45,20 +45,24 @@ resource "aws_security_group" "app" {
   description = "Security group for Utility Billing AI app server"
   vpc_id      = data.aws_vpc.default.id
 
-  ingress {
-    description = "SSH from admin network"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = [var.ssh_allowed_cidr]
+  dynamic "ingress" {
+    for_each = var.enable_ssh_ingress ? [1] : []
+
+    content {
+      description = "SSH from admin network"
+      from_port   = 22
+      to_port     = 22
+      protocol    = "tcp"
+      cidr_blocks = [var.ssh_allowed_cidr]
+    }
   }
 
   ingress {
-    description = "Streamlit UI"
-    from_port   = 8501
-    to_port     = 8501
+    description = "HTTP via Nginx"
+    from_port   = 80
+    to_port     = 80
     protocol    = "tcp"
-    cidr_blocks = var.streamlit_allowed_cidrs
+    cidr_blocks = ["0.0.0.0/0"]
   }
 
   # Intentionally no ingress rules for 8000 (API) and 8080 (Airflow).
@@ -94,6 +98,13 @@ resource "aws_iam_role" "ec2_role" {
       }
     ]
   })
+}
+
+# Allow team access via Systems Manager Session Manager (no shared PEM key).
+resource "aws_iam_role_policy_attachment" "ec2_ssm_core" {
+  count      = var.enable_ssm_access ? 1 : 0
+  role       = aws_iam_role.ec2_role.name
+  policy_arn = "arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore"
 }
 
 # Attach least-privilege bucket access only when bucket name is provided.
@@ -141,10 +152,10 @@ resource "aws_instance" "app" {
   instance_type          = var.instance_type
   key_name               = var.ssh_key_name
   subnet_id              = element(data.aws_subnets.default.ids, 0)
-  vpc_security_group_ids = [aws_security_group.app.id]
+  vpc_security_group_ids = [aws_security_group.app.id, var.rds_security_group_id]
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   # Phase 2: install Docker and Docker Compose plugin automatically on first boot.
-  user_data              = var.enable_docker_bootstrap ? local.docker_bootstrap_user_data : null
+  user_data = var.enable_docker_bootstrap ? local.docker_bootstrap_user_data : null
 
   root_block_device {
     # gp3 is cost-effective and performs well for this workload.

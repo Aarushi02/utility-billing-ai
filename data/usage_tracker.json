@@ -1,0 +1,19 @@
+{
+  "month": "2026-03",
+  "llm": {
+    "requests": 0,
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "total_tokens": 0,
+    "cost": 0.0,
+    "by_model": {},
+    "recent_calls": []
+  },
+  "aws": {
+    "requests": 0,
+    "success": 0,
+    "failures": 0,
+    "by_operation": {},
+    "recent_calls": []
+  }
+}

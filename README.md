@@ -345,7 +345,7 @@ docker compose up -d --build api streamlit
 ```
 
 ### **Production (AWS EC2 — already deployed)**
-- Public URL: `http://98.89.240.117:8501`
+- Public URL: `http://3.12.193.9` *(via Nginx on port 80)*
 - Infra provisioned via Terraform (`terraform/`)
 - See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for full setup guide
 
@@ -404,7 +404,7 @@ dev branch  ──► pull request ──► merge to main
                             GitHub Actions triggers
                                       │
                                       ▼
-                            SSH into EC2 (98.89.240.117)
+                            SSH into EC2 (3.12.193.9)
                                       │
                                       ▼
                       git fetch + git reset --hard origin/main
@@ -419,7 +419,7 @@ Go to your repo → **Settings → Secrets and variables → Actions → New rep
 
 | Secret Name | Value |
 |-------------|-------|
-| `EC2_HOST` | `98.89.240.117` |
+| `EC2_HOST` | `3.12.193.9` *(update if IP changes after terraform destroy+apply)* |
 | `EC2_USER` | `ubuntu` |
 | `EC2_SSH_KEY` | Full contents of `~/Desktop/utility-billing-key.pem` |
 
@@ -444,9 +444,10 @@ The entire application stack is containerised with **Docker** and orchestrated u
 
 | Service | Build Source | Exposed Port | Purpose |
 |---------|-------------|-------------|---------|
-| `api` | `Dockerfile.api` | `127.0.0.1:8000` (local only) | FastAPI backend — all AI logic & DB calls |
-| `streamlit` | `app/Dockerfile` | `8501` (public) | Streamlit frontend — user-facing dashboard |
-| `airflow` | `airflow/Dockerfile` | `127.0.0.1:8080` (local only) | Apache Airflow — DAG scheduler & executor |
+| `api` | `Dockerfile.api` | `127.0.0.1:8000` (internal only) | FastAPI backend — all AI logic & DB calls |
+| `streamlit` | `app/Dockerfile` | Internal only (via Nginx) | Streamlit frontend — user-facing dashboard |
+| `nginx` | `nginx:alpine` | `0.0.0.0:80` (public) | Reverse proxy — only public entry point |
+| `airflow` | `apache/airflow` | `127.0.0.1:8080` (disabled by default) | Apache Airflow — DAG scheduler (profile-gated) |
 | `db` | `postgres:15` | `5432` (internal network only) | PostgreSQL — persistent structured data |
 
 ### **Docker Compose Files**
@@ -471,13 +472,16 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 All containers share an internal Docker bridge network. The Streamlit container calls the FastAPI container via `http://api:8000` — the Docker service name `api` resolves automatically inside the network. Neither `api` nor `airflow` are reachable from outside EC2.
 
 ```
-Internet ──► EC2:8501 ──► streamlit container
-                               │  http://api:8000
-                               ▼
-                           api container
-                               │  postgres://db:5432
-                               ▼
-                           db container (PostgreSQL)
+Internet ──► EC2:80 ──► nginx container
+                              │  proxy_pass http://streamlit:8501
+                              ▼
+                          streamlit container
+                              │  http://api:8000
+                              ▼
+                          api container
+                              │  postgres://db:5432
+                              ▼
+                          db container (PostgreSQL)
 ```
 
 ### **Volumes & Persistent State**
@@ -518,18 +522,21 @@ The production stack runs on **AWS** using a cost-effective single-VM design. No
 
 | Service | Role in This Project |
 |---------|---------------------|
-| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers |
-| **Elastic IP** | Static public IP (`98.89.240.117`) — survives EC2 reboots |
+| **EC2** (`t3.micro`, `us-east-1`) | Single VM that runs all Docker containers (with 2GB swap auto-configured) |
+| **Elastic IP** | Static public IP — survives EC2 stop/start (changes only on destroy+recreate) |
 | **IAM Role + Instance Profile** | Grants EC2 permission to read/write S3 — no hard-coded AWS keys on server |
 | **S3 Bucket** | Stores uploaded bill PDFs, tariff JSONs, and generated audit reports |
-| **Security Group** | Firewall — only ports `22` (SSH, your IP only) and `8501` (Streamlit, public) are open |
+| **Security Group** | Firewall — only ports `22` (SSH, your IP only) and `80` (Nginx, public) are open |
+| **Lambda** (x2) | Tiny Python functions: one starts EC2, one stops EC2 — triggered by EventBridge |
+| **EventBridge** (x2) | Cron scheduler — fires at 9 AM and 6 PM EST Mon–Fri to start/stop EC2 |
 
 ### **Security Group Rules**
 
 | Port | Protocol | Source | Reason |
 |------|----------|--------|--------|
 | `22` | TCP | Your IP only | SSH admin access |
-| `8501` | TCP | `0.0.0.0/0` | Streamlit public access |
+| `80` | TCP | `0.0.0.0/0` | Nginx public access (proxies to Streamlit) |
+| `8501` | — | ❌ Blocked | Streamlit internal only (Nginx handles it) |
 | `8000` | — | ❌ Blocked | FastAPI internal only |
 | `8080` | — | ❌ Blocked | Airflow internal only |
 
@@ -556,22 +563,54 @@ s3://<bucket-name>/
 ### **Full AWS Architecture**
 
 ```
-Your Browser
-    │
-    ▼ port 8501 (public)
-EC2 Instance  ──  Elastic IP: 98.89.240.117
-│  AMI: Ubuntu 22.04, t3.micro, us-east-1
-│  Security Group: 22 (your IP), 8501 (public)
-│  IAM Role ──► S3 read/write (no stored keys)
-│
-└── Docker Compose Stack
-    ├── streamlit   :8501  (public)
-    ├── api         :8000  (internal)
-    ├── airflow     :8080  (internal)
-    └── postgres    :5432  (internal)
+┌─────────────────────────────────────────────────────────────────┐
+│                        INTERNET                                  │
+└──────────────────────────┬──────────────────────────────────────┘
+                           │ HTTP port 80 (public)
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│           EC2 Instance  ──  Elastic IP: 3.12.193.9               │
+│           AMI: Ubuntu 24.04 LTS  |  t3.micro  |  us-east-1      │
+│           Disk: 20GB gp3  |  RAM: 1GB  |  Swap: 2GB             │
+│           Security Group: port 22 (your IP) + port 80 (public)  │
+│           IAM Role ──► S3 read/write (no stored credentials)     │
+│                                                                  │
+│  ┌─────────────────── Docker Compose Stack ──────────────────┐  │
+│  │                                                            │  │
+│  │  [nginx :80]  ◄── Only public entry point                 │  │
+│  │       │  proxy_pass http://streamlit:8501                  │  │
+│  │       ▼                                                    │  │
+│  │  [streamlit :8501]  ◄── Internal Docker network only       │  │
+│  │       │  http://api:8000                                   │  │
+│  │       ▼                                                    │  │
+│  │  [api :8000]  ◄── Internal only (127.0.0.1 bound)         │  │
+│  │                                                            │  │
+│  │  [airflow :8080]  ◄── Disabled by default (profile-gated) │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                  │
+│  IAM Role ─────────────────────────────────────────────────────► │
+└──────────────────────────────────────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                    AWS S3 Bucket                                  │
+│  uploads/   tariffs/   processed/   reports/                     │
+└─────────────────────────────────────────────────────────────────┘
 
-AWS S3 Bucket
-└── PDFs, JSONs, reports
+┌─────────────────────────────────────────────────────────────────┐
+│         EC2 AUTO SCHEDULER (Optional — currently DISABLED)       │
+│                    Manual start/stop is active                   │
+│                                                                  │
+│  EventBridge Scheduler ──► Lambda (ec2-start)                    │
+│  "cron(0 9 ? * MON-FRI *)" America/New_York (DST auto-handled)  │
+│  = 9:00 AM Mon-Fri New York time  ──► StartInstances             │
+│                                                                  │
+│  EventBridge Scheduler ──► Lambda (ec2-stop)                     │
+│  "cron(0 18 ? * MON-FRI *)" America/New_York (DST auto-handled) │
+│  = 6:00 PM Mon-Fri New York time  ──► StopInstances              │
+│                                                                  │
+│  Cost saving: ~$2-3/month vs ~$8/month running 24/7              │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
 See [documentation/AWS_REUSE_SETUP_RUNBOOK.md](documentation/AWS_REUSE_SETUP_RUNBOOK.md) for the full step-by-step setup guide.
@@ -587,23 +626,28 @@ All AWS resources are defined as **Terraform code** in the `terraform/` director
 | Terraform Resource | AWS Service | Purpose |
 |-------------------|-------------|---------|
 | `aws_instance` | EC2 | Application server (`t3.micro`) |
-| `aws_security_group` | Security Group | Firewall — SSH + Streamlit rules |
-| `aws_eip` + `aws_eip_association` | Elastic IP | Static public IP bound to EC2 |
+| `aws_security_group` | Security Group | Firewall — SSH (your IP) + HTTP port 80 |
+| `aws_eip` | Elastic IP | Static public IP bound to EC2 |
 | `aws_iam_role` | IAM | EC2 service identity |
 | `aws_iam_instance_profile` | IAM | Attaches role to EC2 |
 | `aws_iam_role_policy` | IAM | S3 access permissions inline policy |
+| `aws_lambda_function` (x2) | Lambda | Start + Stop EC2 functions (Python 3.12) |
+| `aws_scheduler_schedule` (x2) | EventBridge Scheduler | DST-aware cron — 9 AM start + 6 PM stop (America/New_York) |
+| `aws_iam_role` (scheduler invoke) | IAM | EventBridge Scheduler role to invoke Lambda |
+| `aws_iam_role` (lambda exec) | IAM | Lambda execution role (EC2 start/stop only) |
 
 ### **Terraform File Map**
 
 | File | Purpose |
 |------|---------|
-| `terraform/main.tf` | All resource definitions |
-| `terraform/variables.tf` | Input variable declarations with types and defaults |
-| `terraform/terraform.tfvars` | Your actual environment values (gitignored) |
-| `terraform/terraform.tfvars.example` | Safe template to copy |
-| `terraform/outputs.tf` | Prints EC2 IP, instance ID, SSH command after apply |
+| `terraform/main.tf` | Core resources — EC2, SG, EIP, IAM |
+| `terraform/scheduler.tf` | EC2 auto start/stop — Lambda + EventBridge crons |
+| `terraform/variables.tf` | All input variable declarations with types and defaults |
+| `terraform/terraform.tfvars` | Your actual values (gitignored — never commit) |
+| `terraform/terraform.tfvars.example` | Safe template to copy for new environments |
+| `terraform/outputs.tf` | Prints EC2 IP, instance ID, SSH command, scheduler status |
 | `terraform/versions.tf` | Required provider + Terraform version pins |
-| `terraform/scripts/` | EC2 `user_data` bootstrap template (Docker install) |
+| `terraform/scripts/bootstrap_docker.sh.tftpl` | EC2 first-boot: 2GB swap + Docker CE install |
 
 ### **Key Variables to Fill In**
 
@@ -704,6 +748,264 @@ response = client.call(
 
 ---
 
+## ⏰ EC2 Manual Start / Stop + Auto Scheduler
+
+The EC2 instance can be started and stopped **manually anytime** from your terminal.
+An optional **auto-scheduler** (EventBridge + Lambda) can start/stop it automatically on weekday office hours — currently **DISABLED** (manual mode active).
+
+---
+
+### 🖐️ Manual Start / Stop (Use These Daily)
+
+**Prerequisites — one-time setup:**
+```bash
+# Install AWS CLI (if not already installed)
+brew install awscli
+
+# Configure credentials (one-time only)
+aws configure
+# Enter: Access Key ID, Secret Access Key, region = us-east-1, output = json
+
+# Verify it works
+aws sts get-caller-identity
+```
+
+**Start EC2 (app will be live in ~60 seconds):**
+```bash
+aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+```
+
+**Stop EC2 (saves cost — IP and data preserved):**
+```bash
+aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+```
+
+**Check if EC2 is running:**
+```bash
+aws ec2 describe-instances \
+  --region us-east-1 \
+  --instance-ids i-06ebc19f707862bdd \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text
+```
+
+> ✅ After starting, open **`http://3.12.193.9`** — app is live once containers boot (~60 sec).
+
+---
+
+### 🔄 What Happens When You Stop / Start
+
+| Item | When Stopped | When Started Again |
+|------|-------------|-------------------|
+| EC2 Instance | Stopped (NOT terminated) | Starts fresh |
+| Elastic IP (`3.12.193.9`) | **Kept** — reserved for you | **Same IP** ✅ |
+| Disk / repo / `.env` | **Kept** — disk preserved | **Same files** ✅ |
+| Docker containers | Stopped gracefully | **Auto-restart** (`restart: unless-stopped`) ✅ |
+| Database data | **Kept** — lives on disk | **Same data** ✅ |
+| App URL | Offline (connection refused) | Back at `http://3.12.193.9` ✅ |
+
+---
+
+### 🤖 Auto Scheduler (Currently DISABLED — Optional)
+
+The scheduler uses **AWS EventBridge Scheduler + Lambda** to auto start/stop EC2 on office hours.
+Timezone: `America/New_York` — **DST handled automatically** (no UTC math, no manual adjustment ever).
+
+**Schedule when enabled:** Start 9:00 AM Mon–Fri | Stop 6:00 PM Mon–Fri (New York time)
+
+**Enable auto-scheduler (will start/stop automatically):**
+```bash
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-start \
+  --state ENABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-stop \
+  --state ENABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+```
+
+**Disable auto-scheduler (go back to manual control):**
+```bash
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-start \
+  --state DISABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 \
+  --name utility-billing-ai-prod-ec2-stop \
+  --state DISABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+```
+
+**Check scheduler status:**
+```bash
+aws scheduler get-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --query '{State: State, Schedule: ScheduleExpression, Timezone: ScheduleExpressionTimezone}' \
+  --output table
+```
+
+**Change schedule time (e.g. 8 AM start):**
+```hcl
+# In terraform/terraform.tfvars:
+ec2_start_cron_local = "cron(0 8 ? * MON-FRI *)"   # 8 AM New York time
+ec2_stop_cron_local  = "cron(0 18 ? * MON-FRI *)"  # 6 PM New York time
+```
+Then: `cd terraform && terraform apply`
+
+**Remove scheduler entirely from AWS:**
+```hcl
+# In terraform/terraform.tfvars:
+enable_ec2_scheduler = false
+```
+Then: `cd terraform && terraform apply`
+
+### **Cost Comparison**
+
+| Scenario | Hours/month | Approx Cost |
+|----------|-------------|-------------|
+| 24/7 running | 720 hrs | ~$8/month |
+| Office hours (9AM–6PM, Mon–Fri) | ~195 hrs | ~$2–3/month |
+| **Saving** | | **~$5–6/month (~65% cheaper)** |
+
+> Elastic IP costs ~$0.005/hr when EC2 is stopped — about $0.70/month. Still much cheaper than running 24/7.
+
+---
+
+## 🗂️ Operations Cheatsheet
+
+### 🖐️ EC2 Start / Stop (Daily Use)
+
+```bash
+# ── START EC2 (app live in ~60 sec) ──────────────────────────────────────────
+aws ec2 start-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+
+# ── STOP EC2 (saves cost — IP + data kept) ───────────────────────────────────
+aws ec2 stop-instances --region us-east-1 --instance-ids i-06ebc19f707862bdd
+
+# ── Check EC2 state (running / stopped / pending) ────────────────────────────
+aws ec2 describe-instances \
+  --region us-east-1 \
+  --instance-ids i-06ebc19f707862bdd \
+  --query 'Reservations[0].Instances[0].State.Name' \
+  --output text
+
+# ── Get current public IP ────────────────────────────────────────────────────
+aws ec2 describe-instances \
+  --region us-east-1 \
+  --instance-ids i-06ebc19f707862bdd \
+  --query 'Reservations[0].Instances[0].PublicIpAddress' \
+  --output text
+```
+
+### 🔄 Scheduler Control (Enable / Disable Auto Start-Stop)
+
+```bash
+# ── ENABLE auto-scheduler (9 AM start, 6 PM stop, Mon–Fri, NY time) ──────────
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --state ENABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --state ENABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+# ── DISABLE auto-scheduler (go back to manual control) ───────────────────────
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --state DISABLED \
+  --schedule-expression "cron(0 9 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-start,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+aws scheduler update-schedule \
+  --region us-east-1 --name utility-billing-ai-prod-ec2-stop \
+  --state DISABLED \
+  --schedule-expression "cron(0 18 ? * MON-FRI *)" \
+  --schedule-expression-timezone "America/New_York" \
+  --flexible-time-window Mode=OFF \
+  --target Arn=arn:aws:lambda:us-east-1:150758096185:function:utility-billing-ai-prod-ec2-stop,RoleArn=arn:aws:iam::150758096185:role/utility-billing-ai-prod-scheduler-invoke-role
+
+# ── Check scheduler status ────────────────────────────────────────────────────
+aws scheduler get-schedule --region us-east-1 --name utility-billing-ai-prod-ec2-start \
+  --query '{State: State, Schedule: ScheduleExpression, Timezone: ScheduleExpressionTimezone}' \
+  --output table
+```
+
+### 🔒 SSH & Docker
+
+```bash
+# ── SSH into EC2 ─────────────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9
+
+# ── Check all containers are running ─────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
+  "cd ~/utility-billing-ai && docker compose -f docker-compose.yml -f docker-compose.prod.yml ps"
+
+# ── Start all services manually (if containers stopped) ──────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
+  "cd ~/utility-billing-ai && \
+   docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+   up -d api streamlit nginx"
+
+# ── View live logs ────────────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
+  "cd ~/utility-billing-ai && docker compose logs -f --tail=50"
+
+# ── API health check ──────────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 \
+  "curl -sS http://127.0.0.1:8000/api/v1/health/live"
+
+# ── Check memory and swap ─────────────────────────────────────────────────────
+ssh -i ~/Desktop/utility-billing-key.pem ubuntu@3.12.193.9 "free -h"
+```
+
+### 🏗️ Terraform
+
+```bash
+cd terraform
+
+# ── Preview changes (safe — no resources touched) ────────────────────────────
+terraform plan
+
+# ── Apply changes ─────────────────────────────────────────────────────────────
+terraform apply
+
+# ── Check current outputs (IP, instance ID, scheduler status) ─────────────────
+terraform output
+
+# ── Destroy everything (WARNING: IP will change on next apply) ────────────────
+terraform destroy
+```
+
+---
+
 ## 📞 Support
 
 - 📧 Email: harshal.sanjivpatil2000@gmail.com
@@ -711,7 +1013,7 @@ response = client.call(
 
 ---
 
-**Last Updated**: March 13, 2026 | **Version**: 1.2.0 | **Status**: ✅ Production Ready — AWS EC2 Live
+**Last Updated**: March 19, 2026 | **Version**: 1.5.0 | **Status**: ✅ Production Ready — AWS EC2 @ http://3.12.193.9 | Scheduler: DISABLED (manual start/stop active)
 
 <div align="center">
 
