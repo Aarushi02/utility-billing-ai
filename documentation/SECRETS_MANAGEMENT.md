@@ -3,6 +3,9 @@
 All app secrets are stored in AWS SSM Parameter Store (free tier, encrypted).
 No developer ever needs to share or manually copy a `.env` file again.
 
+**AWS Account:** Troy & Banks — `335971291843`, region `us-east-2`
+**Local credentials:** `~/.aws/credentials` [default] → Troy & Banks keys. No keys in `.env`.
+
 ---
 
 ## How It Works
@@ -92,23 +95,32 @@ No one emails/WhatsApps `.env` files anymore.
 
 ---
 
-## EC2 Deploy Flow (Updated)
+## EC2 Auto-Fetch on Every Boot (Lambda Start Included)
 
-When deploying on EC2, run `fetch_secrets.sh` before `docker compose up`:
+A systemd service (`utility-billing-startup.service`) is installed on EC2 and runs on every boot — including after the Lambda scheduler starts the instance each morning.
 
+**Flow on every EC2 start:**
+```
+Lambda calls ec2:StartInstances
+        ↓
+EC2 boots → systemd starts utility-billing-startup.service
+        ↓
+fetch_secrets.sh → writes fresh .env from SSM (always latest credentials)
+        ↓
+docker compose up -d (api + streamlit + nginx start with current secrets)
+```
+
+Log file: `/var/log/fetch-and-start.log`
+
+To manually trigger the same flow:
 ```bash
 cd ~/utility-billing-ai
-
-# Pull secrets from SSM → write .env
 ./scripts/fetch_secrets.sh
-
-# Deploy (reads .env as normal)
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build api streamlit nginx
-docker compose -f docker-compose.yml -f docker-compose.prod.yml exec -T api python -m src.database.init_db
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
 ```
 
 The EC2 IAM role already has `ssm:GetParametersByPath` permission (added via `terraform/secrets.tf`).
-No AWS credentials needed on the EC2 — IAM instance profile handles it automatically.
+No AWS credentials needed on EC2 — IAM instance profile handles it automatically.
 
 ---
 
@@ -138,10 +150,23 @@ Each developer IAM user needs this policy to read secrets locally:
 
 ---
 
-## Files Added
+## DB_URL — Not Stored in SSM
+
+`DB_URL` is NOT a parameter in SSM. `src/utils/config.py` builds it at runtime from the individual parts:
+- `DB_HOST`, `DB_USER`, `DB_PASSWORD`, `DB_PORT`, `DB_NAME`
+
+Update only those five fields in `terraform.tfvars` — `DB_URL` is always correct automatically.
+
+**Current production DB:** `database-1.cv8g6qea8dzl.us-east-2.rds.amazonaws.com`
+
+---
+
+## Files
 
 | File | Purpose |
 |---|---|
 | `terraform/secrets.tf` | Creates SSM parameters via Terraform |
 | `scripts/fetch_secrets.sh` | Pulls SSM params and writes `.env` on EC2 or locally |
+| `scripts/fetch_and_start.sh` | Boot script: fetch secrets + start Docker Compose |
+| `scripts/setup_autostart.sh` | Installs systemd boot service on existing EC2 |
 | `terraform/terraform.tfvars` | Secret values (gitignored — never commit) |

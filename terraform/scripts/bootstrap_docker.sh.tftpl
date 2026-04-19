@@ -36,5 +36,29 @@ systemctl start docker
 # Allow configured admin user to run docker without sudo (after re-login).
 usermod -aG docker ${ec2_admin_user}
 
+# Install systemd service that auto-fetches SSM secrets + starts Docker Compose on every boot.
+# This runs after the Lambda scheduler starts the instance — no manual intervention needed.
+cat > /etc/systemd/system/utility-billing-startup.service << 'UNIT'
+[Unit]
+Description=Fetch SSM secrets and start Utility Billing Docker Compose
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=${ec2_admin_user}
+WorkingDirectory=/home/${ec2_admin_user}/utility-billing-ai
+ExecStart=/bin/bash /home/${ec2_admin_user}/utility-billing-ai/scripts/fetch_and_start.sh
+RemainAfterExit=yes
+TimeoutStartSec=120
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+systemctl daemon-reload
+systemctl enable utility-billing-startup.service
+
 # Write marker file for quick verification.
 echo "Docker bootstrap completed at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > /var/log/docker-bootstrap.done

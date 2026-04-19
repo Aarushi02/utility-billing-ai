@@ -19,6 +19,7 @@ variable "app_secrets" {
 }
 
 resource "aws_ssm_parameter" "app_secret" {
+  # config.py builds DB_URL at runtime from DB_HOST/USER/PASSWORD/PORT/NAME — no DB_URL param needed.
   for_each = var.app_secrets
 
   name        = "/${var.project_name}/${var.environment}/${each.key}"

@@ -43,13 +43,12 @@ def get_env(key: str, default=None):
 
 API_KEY = get_env("OPENAI_API_KEY")
 MODEL = get_env("OPENAI_MODEL")
-DATABASE_URL = get_env("DB_URL")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-if not API_KEY or not DATABASE_URL:
-    raise ValueError("Missing API_KEY or DATABASE_URL.")
+if not API_KEY:
+    raise ValueError("Missing OPENAI_API_KEY.")
 
 client = OpenAI(api_key=API_KEY)
 

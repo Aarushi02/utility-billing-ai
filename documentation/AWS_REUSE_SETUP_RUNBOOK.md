@@ -570,6 +570,48 @@ aws ec2 release-address --allocation-id eipalloc-08d6a1e931fa54716
 
 ---
 
+### 2026-04-18 (Session 5 — Secrets Management, DB Migration, Auto-Fetch on Boot)
+
+1. Changes made:
+- Migrated all secrets from manual `.env` sharing to AWS SSM Parameter Store
+- Updated DB credentials: old Heroku RDS (us-east-1) → new RDS `database-1.cv8g6qea8dzl.us-east-2.rds.amazonaws.com`
+- Switched AWS account from Harshal's personal account to Troy & Banks account (`335971291843`)
+- `~/.aws/credentials` [default] now uses Troy & Banks keys; region set to `us-east-2`
+- Removed hardcoded AWS keys from `.env` — local dev uses AWS profile, EC2 uses IAM role
+- `DB_URL` removed from SSM — `config.py` builds it at runtime from individual DB_* fields
+- Fixed `extract_logic_llm_call.py` to not read `DB_URL` from env directly (used `get_engine` from db_utils)
+- Added systemd boot service `utility-billing-startup.service` — auto-fetches SSM secrets and starts Docker Compose on every EC2 start (including Lambda-triggered starts)
+- Added `scripts/fetch_and_start.sh` and `scripts/setup_autostart.sh`
+- Moved `RUNBOOK_DEPLOYMENT.md` from repo root → `documentation/RUNBOOK_DEPLOYMENT.md`
+
+2. Why:
+- Developers were sharing `.env` files manually — security risk
+- DB was pointing at old Heroku RDS; migrated to new AWS RDS in us-east-2
+- Lambda scheduler starts EC2 daily but containers were using stale secrets
+- All infra is in Troy & Banks account, so local tooling must match
+
+3. Commands used:
+```bash
+# Push updated secrets to SSM
+cd terraform && terraform apply -auto-approve
+
+# Verify DB creds on EC2
+aws ssm send-command --instance-ids i-0393dd4f827866db2 --document-name AWS-RunShellScript \
+  --parameters 'commands=["grep DB_ /home/ubuntu/utility-billing-ai/.env"]' --region us-east-2
+
+# Fetch latest secrets and restart Docker on EC2
+aws ssm send-command --instance-ids i-0393dd4f827866db2 --document-name AWS-RunShellScript \
+  --parameters 'commands=["cd /home/ubuntu/utility-billing-ai && ./scripts/fetch_secrets.sh && docker compose -f docker-compose.yml -f docker-compose.prod.yml down && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d"]' --region us-east-2
+```
+
+4. Validation done:
+- Terraform apply: 4 SSM params updated, DB_URL param deleted ✅
+- EC2 .env shows new DB host `database-1.cv8g6qea8dzl.us-east-2.rds.amazonaws.com` ✅
+- All 3 containers Up and healthy after restart ✅
+- systemd `utility-billing-startup.service` enabled (auto-runs on every boot) ✅
+
+---
+
 ### 2026-03-18 (Session 2 — Nginx + Swap + Full Redeploy)
 
 1. Change made:

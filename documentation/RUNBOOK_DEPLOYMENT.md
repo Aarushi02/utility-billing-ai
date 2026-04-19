@@ -13,7 +13,8 @@ Airflow is intentionally out of scope in this guide (disabled by default via Doc
 ## 1) Prerequisites
 
 - Docker Engine + Compose plugin (auto-installed on EC2 via bootstrap script)
-- A valid `.env` file in project root
+- `.env` is **auto-generated** by `scripts/fetch_secrets.sh` from AWS SSM Parameter Store — no manual copy needed
+- AWS credentials: `~/.aws/credentials` with Troy & Banks account (`335971291943`, region `us-east-2`)
 - Ports needed:
   - `80` for Nginx (public — only port open in Security Group)
   - `8000` for API (internal only — bound to `127.0.0.1`)
@@ -99,32 +100,33 @@ The `docker-compose.prod.yml` overrides:
 
 ---
 
-## 5) Environment Variables You Must Set
+## 5) Environment Variables — How They Are Managed
 
-Minimum required:
+**Do NOT manually create or copy `.env` files.** All secrets are in AWS SSM Parameter Store.
 
-- `LOGIC_USERNAME`
-- `LOGIC_PASSWORD`
-- `DB_TYPE` (`postgres` recommended in production)
-- `DB_HOST`
-- `DB_PORT`
-- `DB_NAME`
-- `DB_USER`
-- `DB_PASSWORD`
-- `API_BASE_URL=http://api:8000`
+### On EC2 (production)
+`.env` is written automatically by the systemd boot service. You can also refresh manually:
+```bash
+cd ~/utility-billing-ai
+./scripts/fetch_secrets.sh
+```
 
-Optional but common:
+### Locally (development)
+```bash
+aws configure          # use Troy & Banks IAM credentials, region us-east-2
+./scripts/fetch_secrets.sh    # writes .env from SSM
+```
 
-- `OPENAI_API_KEY`
-- `OPENAI_MODEL`
-- `AWS_BUCKET_NAME`
-- `AWS_REGION`
-- `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` (not needed if using EC2 IAM role)
+### Key variables managed in SSM
+- `DB_TYPE`, `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` — DB_URL is built at runtime by `config.py`, not stored
+- `OPENAI_API_KEY`, `OPENAI_MODEL`
+- `AWS_BUCKET_NAME`, `AWS_REGION` — EC2 uses IAM role for S3; no static keys in `.env`
+- `LOGIC_USERNAME`, `LOGIC_PASSWORD`
 
-Notes:
-
-- Keep `.env` only on the server — never commit secrets to git
-- On EC2 with IAM instance profile, static AWS keys can be omitted
+### To update a secret
+1. Edit `terraform/terraform.tfvars` (gitignored)
+2. Run `cd terraform && terraform apply`
+3. On EC2: `./scripts/fetch_secrets.sh && docker compose ... restart`
 
 ---
 
@@ -216,6 +218,8 @@ sudo cat /var/log/docker-bootstrap.done
 
 - `documentation/DEPLOYMENT.md` — local + AWS deployment guide
 - `documentation/AWS_REUSE_SETUP_RUNBOOK.md` — full cloud setup from scratch
+- `documentation/SECRETS_MANAGEMENT.md` — SSM Parameter Store secrets workflow
+- `documentation/DISASTER_RECOVERY_RUNBOOK.md` — EC2/EIP recovery steps
 - `documentation/DEPLOYMENT_PROGRESS_CHECKLIST.md` — current status and pending steps
 - `nginx/nginx.conf` — Nginx reverse proxy configuration
 - `docker-compose.prod.yml` — production port binding overrides
