@@ -7,10 +7,24 @@ User picks NY Audit (stays in app) or VA Audit (redirects to VA service).
 
 import os
 import streamlit as st
+from app.components.home import logout
 
 
 def render_portal():
     va_url = os.environ.get("VA_STREAMLIT_URL", "/va")
+
+    # Logout button — top right
+    if "username" in st.session_state:
+        _, col_user, col_logout = st.columns([3.5, 0.5, 0.3])
+        with col_logout:
+            if st.button("Logout", key="portal_logout_btn", use_container_width=True):
+                logout()
+        with col_user:
+            st.markdown(
+                f"<div style='text-align: right; margin-top: 8px; font-size: 12px;'>"
+                f"{st.session_state.username}</div>",
+                unsafe_allow_html=True
+            )
 
     st.markdown("""
         <style>
