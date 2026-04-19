@@ -6,13 +6,6 @@ services:
   streamlit:
     ports: []
 
-  va-api:
-    ports:
-      - "127.0.0.1:8001:8000"
-
-  va-streamlit:
-    ports: []
-
   nginx:
     image: nginx:alpine
     ports:
@@ -21,5 +14,4 @@ services:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
       - streamlit
-      - va-streamlit
     restart: unless-stopped
