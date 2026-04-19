@@ -113,18 +113,24 @@ if "username" in st.session_state:
         </style>
     """, unsafe_allow_html=True)
 
-    col1, col2, col3 = st.columns([2.8, 0.5, 0.3])
+    col1, col2, col3, col4 = st.columns([2.2, 0.7, 0.5, 0.3])
 
-    with col3:
+    with col4:
         if st.button("Logout", key="logout_btn", use_container_width=True):
             logout()
 
-    with col2:
+    with col3:
         st.markdown(
             f"<div style='text-align: right; margin-top: 8px; font-size: 12px;'>"
             f"{st.session_state.username}</div>",
             unsafe_allow_html=True
         )
+
+    with col2:
+        if st.button("🏠 Home", key="portal_btn", use_container_width=True):
+            st.session_state.pop("selected_service", None)
+            st.session_state.nav_state = "home"
+            st.rerun()
 
 # -----------------------------------------------------
 # LOAD CUSTOM CSS
