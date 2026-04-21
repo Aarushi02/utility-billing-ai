@@ -5,6 +5,8 @@ on:
     branches:
       - main
   workflow_dispatch:
+  schedule:
+    - cron: '15 13 * * 1-5'  # 9:15 AM EST (13:15 UTC) Mon-Fri — 15 min after EC2 starts
 
 permissions:
   contents: read
