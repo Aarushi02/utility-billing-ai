@@ -102,4 +102,6 @@ def render_portal():
                 <div class="card-desc">Utility bill auditing for Virginia state accounts</div>
             </div>
         """, unsafe_allow_html=True)
-        st.link_button("Open Virginia Audit", url=va_url, use_container_width=True)
+        if st.button("Open Virginia Audit", key="btn_va", use_container_width=True):
+            st.markdown(f'<meta http-equiv="refresh" content="0; url={va_url}">', unsafe_allow_html=True)
+            st.stop()
