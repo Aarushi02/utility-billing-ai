@@ -1,186 +1,185 @@
 # VA Integration Guide
 
-How to onboard the Virginia Audit service onto the shared EC2 alongside New York Audit.
+Full record of what has been done, what VA team must do, and what NY team still needs to complete.
 
 ---
 
-## Overview
+## Architecture
 
-Both NY and VA run on the same EC2 instance (`i-0393dd4f827866db2`, `us-east-2`).
-Nginx routes traffic based on path:
+Both NY and VA run on the same EC2 instance. Single IP, single nginx, two apps.
 
 ```
-http://3.12.193.9/     → New York Audit (port 8501)
-http://3.12.193.9/va   → Virginia Audit (port 8502)
+http://3.12.193.9/     → New York Audit  (NY streamlit  → NY API)
+http://3.12.193.9/va   → Virginia Audit  (VA streamlit  → VA API)
+```
+
+**VA Repo:** `https://github.com/vinayjain38/TroyBanks_Audit_Demo_VA`
+
+---
+
+## What Has Been Done (NY Side)
+
+### Infrastructure & Routing
+- [x] nginx updated — `/va` routes to `utility-va-streamlit:8501`, `/` stays NY
+- [x] Docker DNS resolver (`127.0.0.11`) added to nginx so it finds VA containers dynamically after restarts
+- [x] `va-api` and `va-streamlit` added to `docker-compose.yml` with `profiles: [va]` so NY CI/CD never builds or touches them
+- [x] `docker-compose.va-override.yml` created — maps VA's `backend`/`frontend` services to our required container names, ports, network, and `/va` base path without touching their code
+
+### Portal Page
+- [x] Service selection portal added after login — user chooses NY Audit or VA Audit
+- [x] NY Audit stays in current app, VA Audit redirects to `/va`
+- [x] Logout button on portal page
+- [x] 🏠 Home button on every NY page — returns to portal from anywhere
+
+### Deploy Pipeline
+- [x] `fetch_secrets.sh` updated — now accepts project name as argument so it can fetch from `/va-billing-ai/prod/` in SSM (same pattern as NY uses `/utility-billing-ai/prod/`)
+- [x] `deploy.yml` updated — after NY deploy, pulls VA repo and deploys `backend` + `frontend` only (skips their Airflow stack)
+- [x] VA repo cloned on EC2 at `/home/ubuntu/va-billing-ai` (one-time, already done)
+- [x] VA deploy injects `API_HOST_PORT=8001` and `STREAMLIT_HOST_PORT=8502` into VA's `.env`
+
+### Current Deploy Flow
+```
+Push to NY main
+      ↓
+GitHub Actions
+      ↓
+SSM → EC2:
+  1. Pull NY code → fetch NY secrets from SSM → docker compose up (NY only)
+  2. Pull VA code → fetch VA secrets from SSM → docker compose up (backend + frontend only)
+      ↓
+Both apps live, nginx routes traffic
 ```
 
 ---
 
-## What To Send VA Team
+## What VA Team Must Provide
 
-Send them this message:
+### 1. Their `.env` Variable Names + Values
+Share securely (not over email). You will load each one into AWS SSM.
 
-> Since your repo is public, we just need two things:
->
-> **1. Your GitHub repo URL**
-> e.g. `https://github.com/va-org/va-billing-ai`
->
-> **2. Your `docker-compose.yml` must use these exact values:**
->
-> ```yaml
-> services:
->   va-api:
->     container_name: utility-va-api
->     ports:
->       - "127.0.0.1:8001:8000"
->     restart: unless-stopped
->
->   va-streamlit:
->     container_name: utility-va-streamlit
->     ports:
->       - "127.0.0.1:8502:8501"
->     command: ["streamlit", "run", "your_app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.baseUrlPath=/va"]
->     restart: unless-stopped
->
-> networks:
->   default:
->     name: utility-billing-ai_default
->     external: true
-> ```
->
-> The `networks` section is mandatory — without it VA containers won't be reachable by nginx.
-> Container names must match exactly.
-> Once you share the URL we handle everything on our end.
+Ask them for a list like:
+```
+DATABASE_URL=...
+OPENAI_API_KEY=...
+SECRET_KEY=...
+... etc
+```
+
+### 2. Confirm Their docker-compose Uses These Ports (Already Wired)
+VA's repo already uses `${API_HOST_PORT}` and `${STREAMLIT_HOST_PORT}` env vars — our deploy injects the correct values automatically. No changes needed on their side.
 
 ---
 
-## After VA Team Shares Their Repo URL
+## What NY Team Still Needs To Do
 
-### Step 1 — Clone VA Repo on EC2 (One Time Only)
-
-Run this from your local machine:
+### Step 1 — Load VA Secrets Into SSM
+Once VA team shares their `.env`, run this for each variable:
 
 ```bash
-aws ssm send-command \
-  --instance-ids "i-0393dd4f827866db2" \
-  --document-name "AWS-RunShellScript" \
-  --region "us-east-2" \
-  --parameters commands='["cd /home/ubuntu && git clone https://github.com/<va-org>/va-billing-ai.git"]' \
-  --query "Command.CommandId" \
-  --output text
+aws ssm put-parameter \
+  --name "/va-billing-ai/prod/VARIABLE_NAME" \
+  --value "their-value" \
+  --type SecureString \
+  --region us-east-2
 ```
 
-Replace `<va-org>/va-billing-ai` with their actual repo URL.
-
-Verify it cloned:
+Example:
 ```bash
-aws ssm send-command \
-  --instance-ids "i-0393dd4f827866db2" \
-  --document-name "AWS-RunShellScript" \
-  --region "us-east-2" \
-  --parameters commands='["ls /home/ubuntu/va-billing-ai"]' \
-  --query "Command.CommandId" \
-  --output text
+aws ssm put-parameter --name "/va-billing-ai/prod/DATABASE_URL" --value "postgresql://..." --type SecureString --region us-east-2
+aws ssm put-parameter --name "/va-billing-ai/prod/OPENAI_API_KEY" --value "sk-..." --type SecureString --region us-east-2
 ```
 
----
+Repeat for every variable in their `.env`.
 
-### Step 2 — Update Deploy Script
+### Step 2 — Grant EC2 IAM Role Access to VA SSM Path
+The EC2 IAM role currently has access to `/utility-billing-ai/prod/*` only.
+You need to add `/va-billing-ai/prod/*` to the policy.
 
-In `.github/workflows/deploy.yml`, update the SSM command to pull and deploy both repos.
-
-**Current command (NY only):**
+In `terraform/secrets.tf` (or via AWS Console → IAM), add:
 ```
-cd /home/ubuntu/utility-billing-ai && git fetch origin main && git checkout main && git reset --hard origin/main && bash scripts/fetch_secrets.sh && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build && docker compose ps
+arn:aws:ssm:us-east-2:*:parameter/va-billing-ai/prod/*
 ```
+to the existing SSM read policy on the EC2 role.
 
-**Updated command (NY + VA):**
-```
-cd /home/ubuntu/utility-billing-ai && git fetch origin main && git checkout main && git reset --hard origin/main && bash scripts/fetch_secrets.sh && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build && cd /home/ubuntu/va-billing-ai && git fetch origin main && git reset --hard origin/main && docker compose up -d --build && docker compose -f /home/ubuntu/utility-billing-ai/docker-compose.yml ps
-```
+### Step 3 — Re-enable VA Health Check
+Currently the VA health check is disabled in `docker-compose.va-override.yml` because VA containers had no env vars and were crashing.
 
-Commit and push this change to `Dev`, create PR, merge to `main`.
+Once VA secrets are loaded into SSM, remove the `healthcheck: disable: true` block from [docker-compose.va-override.yml](../docker-compose.va-override.yml):
 
----
-
-### Step 3 — Verify VA Containers Are On Correct Network
-
-After first deploy run this via SSM:
-
-```bash
-aws ssm send-command \
-  --instance-ids "i-0393dd4f827866db2" \
-  --document-name "AWS-RunShellScript" \
-  --region "us-east-2" \
-  --parameters commands='["docker network inspect utility-billing-ai_default | grep -A3 va-"]' \
-  --query "Command.CommandId" \
-  --output text
+```yaml
+# Remove these 2 lines from backend section:
+healthcheck:
+  disable: true
 ```
 
-Expected output — both VA containers listed in the network:
-```
-"utility-va-api": { ... }
-"utility-va-streamlit": { ... }
-```
+Commit, PR, merge — deploy will test the health check with real secrets.
 
-If VA containers are NOT in the network, ask VA team to verify the `networks` section in their `docker-compose.yml`.
-
----
-
-### Step 4 — Test
-
-| URL | Expected Result |
+### Step 4 — Test End to End
+| URL | Expected |
 |---|---|
-| `http://3.12.193.9/` | Portal page with NY and VA cards |
-| `http://3.12.193.9/` → New York Audit | NY dashboard loads |
-| `http://3.12.193.9/va` | VA Streamlit app loads |
+| `http://3.12.193.9/` | Portal page (NY + VA cards) |
+| Portal → New York Audit | NY dashboard loads |
+| Portal → Virginia Audit | VA Streamlit loads at `/va` |
+| Portal → Logout | Returns to login |
 
 ---
 
 ## Port Reference
 
-| Service | Internal Port | Container Name |
+| Service | Container Name | Internal Port |
 |---|---|---|
-| NY API | 8000 | `utility-api` |
-| NY Streamlit | 8501 | `utility-streamlit` |
-| VA API | 8001 | `utility-va-api` |
-| VA Streamlit | 8502 | `utility-va-streamlit` |
-| nginx | 80 (public) | `utility-billing-ai-nginx-1` |
+| NY API | `utility-api` | 8000 |
+| NY Streamlit | `utility-streamlit` | 8501 |
+| VA API | `utility-va-api` | 8001 |
+| VA Streamlit | `utility-va-streamlit` | 8502 |
+| nginx | `utility-billing-ai-nginx-1` | 80 (public) |
 
 ---
 
-## How Deploys Work After Integration
+## SSM Secret Paths
 
-```
-You push to NY main
-        ↓
-GitHub Actions triggers
-        ↓
-SSM runs on EC2:
-  1. Pull NY code → rebuild NY containers
-  2. Pull VA code → rebuild VA containers
-        ↓
-Both apps live, nginx routes traffic correctly
-```
+| Team | SSM Path | Fetched To |
+|---|---|---|
+| NY | `/utility-billing-ai/prod/*` | `/home/ubuntu/utility-billing-ai/.env` |
+| VA | `/va-billing-ai/prod/*` | `/home/ubuntu/va-billing-ai/.env` |
 
-NY and VA codebases are fully independent.
-A bug in VA never affects NY and vice versa.
+---
+
+## Key Files Changed (NY Repo)
+
+| File | What Changed |
+|---|---|
+| `app/components/portal.py` | New — service selection portal after login |
+| `app/streamlit_app.py` | Portal shown after login, Home button added |
+| `nginx/nginx.conf` | `/va` routing + Docker DNS resolver |
+| `docker-compose.yml` | VA containers added with `profiles: [va]` |
+| `docker-compose.va-override.yml` | New — maps VA services to our ports/names/network |
+| `docker-compose.prod.yml` | VA port overrides, nginx depends_on cleaned |
+| `scripts/fetch_secrets.sh` | Accepts project name arg for VA SSM path |
+| `.github/workflows/deploy.yml` | Deploys VA repo after NY on every push to main |
+| `documentation/VA_INTEGRATION_GUIDE.md` | This file |
 
 ---
 
 ## Troubleshooting
 
-**502 Bad Gateway on `/va`**
-VA containers are not running or not on the correct Docker network.
+**502 on `/va`**
+VA containers not running or not on correct network.
 ```bash
 docker ps | grep va
 docker network inspect utility-billing-ai_default | grep va
 ```
 
-**VA containers keep getting overwritten**
-Check that `profiles: [va]` exists on `va-api` and `va-streamlit` in `docker-compose.yml`.
-NY deploy must never build VA images.
+**VA deploy fails with "no parameters found"**
+VA secrets not loaded into SSM yet — complete Step 1 above.
 
-**nginx not routing `/va` correctly**
-Check `nginx/nginx.conf` has the `/va` location block pointing to `va-streamlit:8501`.
-Restart nginx via SSM if config was recently changed.
+**VA deploy fails with "unhealthy"**
+VA secrets loaded but health check still disabled — complete Step 3 above.
+
+**502 on `/` after deploy**
+nginx DNS cache stale — restart nginx:
+```bash
+aws ssm send-command --instance-ids "i-0393dd4f827866db2" \
+  --document-name "AWS-RunShellScript" --region "us-east-2" \
+  --parameters commands='["docker restart utility-billing-ai-nginx-1"]'
+```

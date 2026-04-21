@@ -5,15 +5,16 @@
 #
 # Usage:
 #   chmod +x scripts/fetch_secrets.sh
-#   ./scripts/fetch_secrets.sh
-#   ./scripts/fetch_secrets.sh --env staging   (override environment)
+#   ./scripts/fetch_secrets.sh                              (NY prod)
+#   ./scripts/fetch_secrets.sh prod .env va-billing-ai     (VA prod)
+#   SSM_PROJECT=va-billing-ai ./scripts/fetch_secrets.sh   (env var override)
 
 set -euo pipefail
 
 # Ensure AWS CLI is found regardless of how the script is invoked
 export PATH="/usr/local/bin:/usr/bin:/bin:$PATH"
 
-PROJECT="utility-billing-ai"
+PROJECT="${3:-${SSM_PROJECT:-utility-billing-ai}}"
 ENVIRONMENT="${1:-prod}"
 REGION="${AWS_DEFAULT_REGION:-us-east-2}"
 OUTPUT_FILE="${2:-.env}"
