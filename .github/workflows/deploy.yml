@@ -33,7 +33,7 @@ jobs:
             --instance-ids "$INSTANCE_ID" \
             --document-name "AWS-RunShellScript" \
             --region "$AWS_REGION" \
-            --parameters commands='["cd /home/ubuntu/utility-billing-ai && git fetch origin main && git checkout main && git reset --hard origin/main && bash scripts/fetch_secrets.sh && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build && if [ -d /home/ubuntu/va-billing-ai ]; then cd /home/ubuntu/va-billing-ai && git fetch origin main && git reset --hard origin/main && touch .env && echo 'API_HOST_PORT=8001' >> .env && echo 'STREAMLIT_HOST_PORT=8502' >> .env && docker compose -f docker-compose.yml -f /home/ubuntu/utility-billing-ai/docker-compose.va-override.yml up -d --build backend frontend; fi && docker compose -f /home/ubuntu/utility-billing-ai/docker-compose.yml ps"]' \
+            --parameters commands='["cd /home/ubuntu/utility-billing-ai && git fetch origin main && git checkout main && git reset --hard origin/main && bash scripts/fetch_secrets.sh && docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build && if [ -d /home/ubuntu/va-billing-ai ]; then cd /home/ubuntu/va-billing-ai && git fetch origin main && git reset --hard origin/main && bash /home/ubuntu/utility-billing-ai/scripts/fetch_secrets.sh prod .env va-billing-ai && echo 'API_HOST_PORT=8001' >> .env && echo 'STREAMLIT_HOST_PORT=8502' >> .env && docker compose -f docker-compose.yml -f /home/ubuntu/utility-billing-ai/docker-compose.va-override.yml up -d --build backend frontend; fi && docker compose -f /home/ubuntu/utility-billing-ai/docker-compose.yml ps"]' \
             --query "Command.CommandId" \
             --output text)
           echo "command_id=$COMMAND_ID" >> "$GITHUB_OUTPUT"
