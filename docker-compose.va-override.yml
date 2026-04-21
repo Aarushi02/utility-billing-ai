@@ -1,14 +1,10 @@
 services:
   backend:
     container_name: utility-va-api
-    ports:
-      - "127.0.0.1:8001:8000"
     restart: unless-stopped
 
   frontend:
     container_name: utility-va-streamlit
-    ports:
-      - "127.0.0.1:8502:8501"
     command: ["streamlit", "run", "streamlit3.py",
               "--server.port=8501",
               "--server.address=0.0.0.0",
