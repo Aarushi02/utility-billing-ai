@@ -201,4 +201,4 @@ curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:80   # should return 
 | App URL | `http://3.12.193.9` |
 | EC2 Name | `utility-billing-ai-prod-ec2` |
 | Key Pair | `utility-billing-key` |
-| S3 Bucket | `utility-billing-storage` (us-east-1) |
+| S3 Bucket | `utility-billing-storage-335971291843` (us-east-2) |
