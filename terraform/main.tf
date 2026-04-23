@@ -140,6 +140,27 @@ resource "aws_iam_role_policy" "existing_bucket_access" {
   })
 }
 
+# Auto-delete all objects in the existing S3 bucket after 60 days.
+resource "aws_s3_bucket_lifecycle_configuration" "app_bucket_lifecycle" {
+  count  = var.existing_s3_bucket_name != "" ? 1 : 0
+  bucket = var.existing_s3_bucket_name
+
+  rule {
+    id     = "delete-all-after-60-days"
+    status = "Enabled"
+
+    filter {}
+
+    expiration {
+      days = 60
+    }
+
+    noncurrent_version_expiration {
+      noncurrent_days = 60
+    }
+  }
+}
+
 # Bridge IAM role to EC2 via instance profile.
 resource "aws_iam_instance_profile" "ec2_profile" {
   name = "${var.project_name}-${var.environment}-ec2-profile"
