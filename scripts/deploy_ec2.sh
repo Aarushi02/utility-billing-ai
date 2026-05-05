@@ -44,7 +44,7 @@ git fetch origin main
 git reset --hard origin/main
 VA_NEW=$(git rev-parse HEAD)
 
-bash "${NY_DIR}/scripts/fetch_secrets.sh" prod .env va-billing-ai
+bash "${NY_DIR}/scripts/fetch_secrets.sh" prod .env  # reuses utility-billing-ai secrets — VA shares the same SSM vars
 
 if [ "$VA_OLD" != "$VA_NEW" ]; then
   log "VA code changed ($VA_OLD → $VA_NEW) — rebuilding"
