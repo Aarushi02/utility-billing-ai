@@ -40,7 +40,7 @@
   - Port **22** (SSH) — **admin IP only** (`76.37.28.153/32`) — not public
   - Port **80** (HTTP via Nginx) — open to world (`0.0.0.0/0`)
   - All outbound traffic allowed
-- [x] IAM Role + Instance Profile — EC2 can read/write S3 bucket `utility-billing-storage`
+- [x] IAM Role + Instance Profile — EC2 can read/write S3 bucket `utility-billing-storage-335971291843`
 - [x] Elastic IP attached to EC2
 
 ---
