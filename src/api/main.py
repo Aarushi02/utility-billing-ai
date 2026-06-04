@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from src.api.routers import airflow, bills, health, jobs, processing, reports, runs, tariffs, uploads
 from src.database.init_db import init_db
 from src.api.routers.metrics_router import router as metrics_router
-
+from src.startup.dependency_check import validate_dependencies
 app = FastAPI(
     title="Utility Billing AI API",
     version="1.0.0",
@@ -11,8 +11,8 @@ app = FastAPI(
 
 
 @app.on_event("startup")
-def on_startup() -> None:
-    init_db()
+async def startup_event():
+    validate_dependencies()
 
 
 app.include_router(health.router, prefix="/api/v1", tags=["health"])

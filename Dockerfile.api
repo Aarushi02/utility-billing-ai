@@ -1,8 +1,24 @@
 FROM python:3.10-slim
 
+RUN apt-get update && apt-get install -y \
+    ghostscript \
+    poppler-utils \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender1 \
+    libgl1 \
+    libxcb1 \
+    libx11-6 \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN gs --version
+RUN pdfinfo -v
+
 WORKDIR /workspace
 
 COPY requirements.txt /workspace/requirements.txt
+
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
 COPY src /workspace/src
@@ -11,4 +27,5 @@ COPY data /workspace/data
 ENV PYTHONPATH=/workspace
 
 EXPOSE 8000
-CMD ["uvicorn", "src.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+CMD ["uvicorn","src.api.main:app","--host","0.0.0.0","--port","8000"]

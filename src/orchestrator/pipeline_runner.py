@@ -2,6 +2,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+from click import command
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -22,8 +24,17 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     if not step1.exists():
         raise FileNotFoundError(f"Missing: {step1}")
 
-    result = subprocess.run([sys.executable, str(step1), str(pdf_path)], capture_output=True, text=True)
-    if result.returncode != 0:
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "Tariff extraction timed out after 5 minutes"
+        )
         print(f"Step 1 failed with exit code {result.returncode}")
         print(f"STDOUT:\n{result.stdout}")
         print(f"STDERR:\n{result.stderr}")
@@ -43,7 +54,17 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     if not step2.exists():
         raise FileNotFoundError(f"Missing: {step2}")
 
-    result = subprocess.run([sys.executable, str(step2)], capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "Tariff extraction timed out after 5 minutes"
+        )
     if result.returncode != 0:
         print(f"Step 2 failed with exit code {result.returncode}")
         print(f"STDOUT:\n{result.stdout}")
@@ -72,7 +93,17 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
     if raw_bill_document_id:
         cmd.append(str(raw_bill_document_id))
     
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            timeout=300
+        )
+    except subprocess.TimeoutExpired:
+        raise RuntimeError(
+            "Tariff extraction timed out after 5 minutes"
+        )
     if result.returncode != 0:
         print(f"Step 3 failed with exit code {result.returncode}")
         print(f"STDOUT:\n{result.stdout}")
