@@ -26,23 +26,13 @@ if len(sys.argv) > 1:
     print(f" Using PDF from argument: {PDF_PATH}")
     logging.info(f" Using PDF from argument: {PDF_PATH}")
 else:
+    PDF_PATH = Path("UNDEFINED_NO_PDF_PROVIDED")
     print("No PDF path provided as argument; using default.")
     logging.info(" No PDF path provided as argument; using default.")
     
 
 OUTPUT_PATH = PROJECT_ROOT / Path("data/processed/raw_extracted_tarif.json")
 
-def extract_with_pdfplumber(pdf_path: Path):
-    pages_data = []
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            text = page.extract_text() or ""
-            pages_data.append({
-                "page_number": page.page_number,
-                "text": text.strip(),
-                "tables": []  # placeholder to merge Camelot tables
-            })
-    return pages_data
 
 def extract_with_pdfplumber(pdf_path: Path, start_page: int = None, end_page: int = None):
     pages_data = []
@@ -62,19 +52,29 @@ def extract_with_pdfplumber(pdf_path: Path, start_page: int = None, end_page: in
     return pages_data
 
 
-def extract_tables_with_camelot(pdf_path: Path):
-    # Try both 'lattice' (grid lines) and 'stream' (whitespace)
+def extract_tables_with_camelot(pdf_path: Path, batch_size: int = 20):
+    import pdfplumber
     tables = []
-    for flavor in ["lattice", "stream"]:
+    
+    # Get total page count
+    with pdfplumber.open(pdf_path) as pdf:
+        total_pages = len(pdf.pages)
+    
+    # Process in batches
+    for start in range(1, total_pages + 1, batch_size):
+        end = min(start + batch_size - 1, total_pages)
         try:
-            tlist = camelot.read_pdf(str(pdf_path), pages="all", flavor=flavor)
+            tlist = camelot.read_pdf(str(pdf_path), pages=f"{start}-{end}", flavor="lattice")
             for t in tlist:
                 tables.append({
                     "page": t.page,
                     "data": t.df.values.tolist()
                 })
+            print(f"   Camelot: processed pages {start}-{end}")
         except Exception as e:
-            print(f"Camelot {flavor} failed:", e)
+            print(f"   Camelot failed on pages {start}-{end}: {e}")
+            continue  # skip bad batch, don't hang
+    
     return tables
 
 def merge_text_and_tables(pages_data, tables):

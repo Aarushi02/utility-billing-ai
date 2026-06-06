@@ -72,9 +72,9 @@ def extract_tariff_logic_hybrid(input_file, output_file, raw_bill_document_id=No
 
     # Accept filename from command line argument, otherwise use default
     if len(sys.argv) > 1:
-        pdf_filename = sys.argv[1]
-        CURRENT_PDF_FILENAME = Path(pdf_filename).name  # Extract just the filename
+        CURRENT_PDF_FILENAME = Path(sys.argv[1]).name
     else:
+        CURRENT_PDF_FILENAME = "unknown_tariff.pdf"
         print("No PDF filename provided as argument; using default.")
         logger.info(" No PDF filename provided as argument.")
     UTILITY_NAME = "National Grid NY"
@@ -145,7 +145,7 @@ def extract_tariff_logic_hybrid(input_file, output_file, raw_bill_document_id=No
             except Exception as e:
                 logger.error(f"   [!] Processing Error: {str(e)}")
             
-            time.sleep(1)
+            
 
     except SQLAlchemyError as e:
         logger.error(f"DB Error: {e}")
