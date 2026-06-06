@@ -2,7 +2,7 @@ from threading import Lock
 
 tariff_lock = Lock()
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from src.services.processing_service import ProcessingService

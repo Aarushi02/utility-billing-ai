@@ -37,7 +37,7 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
             [sys.executable, str(step1), str(pdf_path)],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=2100,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(
@@ -82,7 +82,7 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
             [sys.executable, str(step2)],
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=2100,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(
@@ -135,7 +135,7 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
             cmd,
             capture_output=True,
             text=True,
-            timeout=300,
+            timeout=2100,
         )
     except subprocess.TimeoutExpired:
         raise RuntimeError(
