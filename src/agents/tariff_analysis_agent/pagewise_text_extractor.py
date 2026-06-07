@@ -51,7 +51,7 @@ def extract_with_pdfplumber(pdf_path: Path, start_page: int = None, end_page: in
             })
     return pages_data
 
-
+"""
 def extract_tables_with_camelot(pdf_path: Path, batch_size: int = 20):
     import pdfplumber
     tables = []
@@ -76,7 +76,7 @@ def extract_tables_with_camelot(pdf_path: Path, batch_size: int = 20):
             continue  # skip bad batch, don't hang
     
     return tables
-
+"""
 def merge_text_and_tables(pages_data, tables):
     for t in tables:
         for p in pages_data:
