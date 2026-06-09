@@ -6,7 +6,6 @@ This creates a machine-readable JSON used by later stages.
 
 import logging
 import pdfplumber
-import camelot
 import json
 from pathlib import Path
 import sys
@@ -29,7 +28,7 @@ else:
     PDF_PATH = Path("UNDEFINED_NO_PDF_PROVIDED")
     print("No PDF path provided as argument; using default.")
     logging.info(" No PDF path provided as argument; using default.")
-    
+
 
 OUTPUT_PATH = PROJECT_ROOT / Path("data/processed/raw_extracted_tarif.json")
 
@@ -44,45 +43,17 @@ def extract_with_pdfplumber(pdf_path: Path, start_page: int = None, end_page: in
         for i in range(start_page - 1, end_page):
             page = pdf.pages[i]
             text = page.extract_text() or ""
+
+            raw_tables = page.extract_tables() or []
+            tables = [t for t in raw_tables if t]
+
             pages_data.append({
                 "page_number": page.page_number,
                 "text": text.strip(),
-                "tables": []
+                "tables": tables,
             })
     return pages_data
 
-"""
-def extract_tables_with_camelot(pdf_path: Path, batch_size: int = 20):
-    import pdfplumber
-    tables = []
-    
-    # Get total page count
-    with pdfplumber.open(pdf_path) as pdf:
-        total_pages = len(pdf.pages)
-    
-    # Process in batches
-    for start in range(1, total_pages + 1, batch_size):
-        end = min(start + batch_size - 1, total_pages)
-        try:
-            tlist = camelot.read_pdf(str(pdf_path), pages=f"{start}-{end}", flavor="lattice")
-            for t in tlist:
-                tables.append({
-                    "page": t.page,
-                    "data": t.df.values.tolist()
-                })
-            print(f"   Camelot: processed pages {start}-{end}")
-        except Exception as e:
-            print(f"   Camelot failed on pages {start}-{end}: {e}")
-            continue  # skip bad batch, don't hang
-    
-    return tables
-"""
-def merge_text_and_tables(pages_data, tables):
-    for t in tables:
-        for p in pages_data:
-            if int(p["page_number"]) == int(t["page"]):
-                p["tables"].append(t["data"])
-    return pages_data
 
 def save_output(data, path: Path):
     # Upload directly to S3 (no local storage)
@@ -91,6 +62,7 @@ def save_output(data, path: Path):
         print(f"✅ Uploaded to S3: {s3_key}")
     else:
         raise Exception(f"Failed to upload to S3: {s3_key}")
+
 
 if __name__ == "__main__":
     # Allow passing a PDF path on the command line: `python extract_pdf.py /path/to/file.pdf`
@@ -114,7 +86,6 @@ if __name__ == "__main__":
             sys.exit(1)
         else:
             print(f"❌ File not found: {PDF_PATH}\nExpected a PDF at that path, or provide one as an argument.\nChecked directory: {PROJECT_ROOT / 'data' / 'raw'}")
-            # show files present in data/raw for debugging
             existing = sorted(glob.glob(str(PROJECT_ROOT / "data" / "raw" / "*")))
             if existing:
                 print("Files in data/raw/:")
@@ -124,16 +95,10 @@ if __name__ == "__main__":
                 print("data/raw/ is empty or missing. Place PDFs there or pass a path to the script.")
             sys.exit(1)
 
-    print("🔍 Extracting text with pdfplumber...")
+    print("🔍 Extracting text and tables with pdfplumber...")
     pages_data = extract_with_pdfplumber(pdf_to_use)
 
-    print("📊 Extracting tables with Camelot...")
-    tables = extract_tables_with_camelot(pdf_to_use)
-
-    print("🧩 Merging results...")
-    merged = merge_text_and_tables(pages_data, tables)
-
     print("💾 Saving structured output...")
-    save_output(merged, OUTPUT_PATH)
+    save_output(pages_data, OUTPUT_PATH)
 
     print("✅ Done. Proceed to Step 1.4 – Dynamic Section Segmentation.")
