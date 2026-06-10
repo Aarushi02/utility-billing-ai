@@ -6,11 +6,9 @@ import requests
 import time
 
 from src.utils.config import get_env
-
 from src.utils.aws_app import (
     upload_fileobject_to_s3,
     get_s3_key,
-
 )
 
 
@@ -47,30 +45,56 @@ def _run_bill_processing(s3_key: str, document_id: int | None = None) -> dict:
     )
 
 
-def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None) -> dict:
-    return _post_api_json(
-        "/api/v1/processing/tariffs/run",
-        {"s3_key": s3_key, "raw_bill_document_id": raw_bill_document_id},
+# ── UPDATED: returns job_id immediately instead of blocking ──────────────────
+def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None) -> str:
+    """Triggers tariff pipeline. Returns job_id immediately — backend cancels any older job."""
+    response = requests.post(
+        f"{API_BASE_URL}/api/v1/processing/tariffs/run",
+        json={
+            "s3_key": s3_key,
+            "raw_bill_document_id": raw_bill_document_id,
+            "filename": s3_key.split("/")[-1],
+        },
+        timeout=30,
     )
+    response.raise_for_status()
+    return response.json()["job_id"]
+
+
+def _fetch_tariff_status(job_id: str) -> dict:
+    """Single status fetch — returns the status dict or raises."""
+    response = requests.get(
+        f"{API_BASE_URL}/api/v1/processing/tariffs/status/{job_id}",
+        timeout=10,
+    )
+    response.raise_for_status()
+    return response.json()
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def render_file_uploader():
     st.title("📁 File Upload Management")
-    # Session flags to manage UI state
+
+    # ── Session state init ────────────────────────────────────────────────────
     if "bill_processed" not in st.session_state:
         st.session_state["bill_processed"] = False
     if "bill_results" not in st.session_state:
         st.session_state["bill_results"] = None
+    if "tariff_results" not in st.session_state:
+        st.session_state["tariff_results"] = []
+    if "current_tariff_job_id" not in st.session_state:     # ← new
+        st.session_state["current_tariff_job_id"] = None
+    if "tariff_job_status" not in st.session_state:         # ← new
+        st.session_state["tariff_job_status"] = {}
+    # ─────────────────────────────────────────────────────────────────────────
 
-    # Tab navigation for separate sections
     tab1, tab2 = st.tabs(["📄 Bill Documents", "⚡ Tariff Documents"])
 
-    # ====================================
-    # TAB 1: Bill Upload
-    # ====================================
+    # =========================================================================
+    # TAB 1: Bill Upload (unchanged)
+    # =========================================================================
     with tab1:
         st.subheader("📄 Bill Documents Management")
-
         st.markdown("### 📤 Upload New Bill")
         st.caption("Upload your utility bill (PDF only)")
 
@@ -84,29 +108,10 @@ def render_file_uploader():
         if bill_file:
             file = bill_file
 
-            # Upload to S3
             s3_key = get_s3_key("raw", file.name)
             if not upload_fileobject_to_s3(file, s3_key):
                 st.error(f"Failed to upload {file.name} to S3")
                 st.stop()
-
-
-
-
-
-
-
-
-
-            # Log upload in DB
-            # metadata = {
-            #     "file_name": file.name,
-            #     "file_type": Path(file.name).suffix.lower(),
-            #     "upload_date": datetime.utcnow(),
-            #     "source": "User Upload (Bill)",
-            #     "status": "uploaded",
-            #     "s3_key": s3_key
-            # }
 
             metadata = {
                 "file_name": file.name,
@@ -114,7 +119,6 @@ def render_file_uploader():
                 "upload_date": datetime.utcnow().isoformat(),
                 "source": "User Upload (Bill)",
                 "status": "uploaded",
-
             }
 
             try:
@@ -123,23 +127,12 @@ def render_file_uploader():
                 st.error(f"Error logging bill file {file.name}: {e}")
                 doc_id = None
 
-            # -------------------------
-            # 🔥 AUTO-PROCESS THE FILE
-            # -------------------------
             try:
-                # Create a full-page modal overlay
                 st.markdown("""
                     <style>
-                    .stApp {
-                        pointer-events: none;
-                    }
-                    div[data-testid="stAppViewContainer"] > section {
-                        filter: blur(5px);
-                    }
-                    section[data-testid="stSidebar"] {
-                        pointer-events: none;
-                        filter: blur(5px);
-                    }
+                    .stApp { pointer-events: none; }
+                    div[data-testid="stAppViewContainer"] > section { filter: blur(5px); }
+                    section[data-testid="stSidebar"] { pointer-events: none; filter: blur(5px); }
                     </style>
                 """, unsafe_allow_html=True)
 
@@ -171,56 +164,36 @@ def render_file_uploader():
                         </style>
                     """.format(file.name), unsafe_allow_html=True)
 
-                # Process the file
                 result = _run_bill_processing(s3_key=s3_key, document_id=doc_id)
                 total_anomalies = int(result.get("total_anomalies", 0))
                 df = pd.DataFrame(result.get("rows", []))
 
-
-
-
-
-
-                # Clear the processing overlay and re-enable page
                 processing_placeholder.empty()
                 st.markdown("""
                     <style>
-                    .stApp {
-                        pointer-events: auto;
-                    }
-                    div[data-testid="stAppViewContainer"] > section {
-                        filter: none;
-                    }
-                    section[data-testid="stSidebar"] {
-                        pointer-events: auto;
-                        filter: none;
-                    }
+                    .stApp { pointer-events: auto; }
+                    div[data-testid="stAppViewContainer"] > section { filter: none; }
+                    section[data-testid="stSidebar"] { pointer-events: auto; filter: none; }
                     </style>
                 """, unsafe_allow_html=True)
 
-                # Display results in a clean card layout
                 st.markdown(f"### 📄 {file.name}")
-
-                # Anomalies metric with tip on the right
                 col1, col2 = st.columns([1, 3])
                 with col1:
                     st.metric(label="Anomalies detected", value=int(total_anomalies))
                 with col2:
                     st.info("💡 Tip: check Audit Bills section to get better insights.")
 
-                # Data table with index starting from 1
                 df_display = df.copy()
                 df_display.index = df_display.index + 1
                 st.dataframe(df_display, use_container_width=True)
 
-                # Persist results and hide uploader on rerun
                 st.session_state["bill_processed"] = True
                 st.session_state["bill_results"] = {
                     "file_name": file.name,
                     "total_anomalies": int(total_anomalies),
                     "dataframe": df_display
                 }
-                # Clear file_uploader value and rerun to hide the chip
                 if "bill_uploader" in st.session_state:
                     del st.session_state["bill_uploader"]
                 st.rerun()
@@ -228,7 +201,6 @@ def render_file_uploader():
             except Exception as e:
                 st.error(f"❌ Failed to process {file.name}: {e}")
 
-        # When processed, show results from session
         if st.session_state["bill_processed"] and st.session_state["bill_results"]:
             res = st.session_state["bill_results"]
             st.markdown(f"### 📄 {res['file_name']}")
@@ -239,9 +211,7 @@ def render_file_uploader():
                 st.info("💡 Tip: check Audit Bills section to get better insights.")
             st.dataframe(res["dataframe"], use_container_width=True)
 
-            # Highlight the "Upload another bill" button with a more prominent color
-            st.markdown(
-                """
+            st.markdown("""
                 <style>
                 div[data-testid="stButton"] > button {
                     background-color: #ff9800 !important;
@@ -253,9 +223,8 @@ def render_file_uploader():
                     background-color: #fb8c00 !important;
                 }
                 </style>
-                """,
-                unsafe_allow_html=True,
-            )
+            """, unsafe_allow_html=True)
+
             if st.button("Upload another bill"):
                 st.session_state["bill_processed"] = False
                 st.session_state["bill_results"] = None
@@ -263,16 +232,12 @@ def render_file_uploader():
                     del st.session_state["bill_uploader"]
                 st.rerun()
 
-    # ====================================
-    # TAB 2: Tariff Upload
-    # ====================================
+    # =========================================================================
+    # TAB 2: Tariff Upload — last-write-wins pattern
+    # =========================================================================
     with tab2:
         st.subheader("Upload Tariff Documents")
         st.caption("Upload the latest tariff document for your utility provider (PDF only).")
-
-        # store results
-        if "tariff_results" not in st.session_state:
-            st.session_state["tariff_results"] = []
 
         tariff_files = st.file_uploader(
             "Choose tariff PDF files",
@@ -281,22 +246,20 @@ def render_file_uploader():
             key="tariff_uploader"
         )
 
-        # If already processed -> show results cleanly
+        # ── Show previous results ─────────────────────────────────────────────
         if st.session_state["tariff_results"]:
             st.markdown("### 📦 Processed Tariff Files")
-
             for result in st.session_state["tariff_results"]:
                 st.success(f"✔ {result['name']}")
                 st.json({
                     "Grouped Tariffs": str(result["grouped"]),
                     "Final Logic": str(result["logic"])
                 })
-
             if st.button("Upload More Tariff Files"):
                 st.session_state["tariff_results"] = []
                 st.rerun()
 
-        # If uploading new files -> process them
+        # ── Process new uploads ───────────────────────────────────────────────
         elif tariff_files:
             for file in tariff_files:
                 try:
@@ -305,30 +268,13 @@ def render_file_uploader():
                     if not upload_fileobject_to_s3(file, s3_key):
                         raise Exception(f"Failed to upload {file.name} to S3")
 
-
-
-
-
-
-
-
                     # ---------- LOG UPLOAD IN DB ----------
-                    # metadata = {
-                    #     "file_name": file.name,
-                    #     "file_type": Path(file.name).suffix.lower(),
-                    #     "upload_date": datetime.now(),
-                    #     "source": "User Upload (Tariff)",
-                    #     "status": "uploaded",
-                    #     "s3_key": s3_key
-                    # }
-
                     metadata = {
                         "file_name": file.name,
                         "file_type": Path(file.name).suffix.lower(),
                         "upload_date": datetime.now().isoformat(),
                         "source": "User Upload (Tariff)",
                         "status": "uploaded",
-
                     }
                     try:
                         tariff_doc_id = _create_raw_document(metadata)
@@ -336,88 +282,100 @@ def render_file_uploader():
                         st.error(f"Error logging tariff file {file.name}: {e}")
                         tariff_doc_id = None
 
-                    # ---------- FULL SCREEN OVERLAY ----------
-                    # Create a full-page modal overlay
+                    # ---------- BLUR BACKGROUND ----------
                     st.markdown("""
                         <style>
-                        .stApp {
-                            pointer-events: none;
-                        }
-                        div[data-testid="stAppViewContainer"] > section {
-                            filter: blur(5px);
-                        }
-                        section[data-testid="stSidebar"] {
-                            pointer-events: none;
-                            filter: blur(5px);
-                        }
+                        .stApp { pointer-events: none; }
+                        div[data-testid="stAppViewContainer"] > section { filter: blur(5px); }
+                        section[data-testid="stSidebar"] { pointer-events: none; filter: blur(5px); }
                         </style>
                     """, unsafe_allow_html=True)
 
                     processing_placeholder = st.empty()
 
-                    with processing_placeholder.container():
-                        st.markdown("""
-                            <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
-                                 background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px);
-                                 z-index: 9999; display: flex; align-items: center; justify-content: center;
-                                 pointer-events: all;'>
-                                <div style='background: white; padding: 40px; border-radius: 10px; 
-                                     text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'>
-                                    <h2 style='color: #1f77b4; margin-bottom: 20px;'>⚡ Processing Tariff Document</h2>
-                                    <p style='font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px;'>{}</p>
-                                    <p style='color: #666; margin-bottom: 20px;'>Extracting, grouping and analyzing tariff...</p>
-                                    <div style='width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden;'>
-                                        <div style='width: 50%; height: 100%; background: linear-gradient(90deg, #1f77b4, #4fc3f7); 
-                                             animation: loading 1.5s ease-in-out infinite;'></div>
+                    # ---------- TRIGGER PIPELINE — returns job_id immediately ----------
+                    job_id = _run_tariff_processing(
+                        s3_key=s3_key,
+                        raw_bill_document_id=tariff_doc_id,
+                    )
+
+                    # Last-write-wins: store latest job_id so any stale poll loop stops
+                    st.session_state["current_tariff_job_id"] = job_id
+                    st.session_state["tariff_job_status"] = {}
+
+                    # ---------- POLL WITH LIVE PROGRESS BAR ----------
+                    while True:
+                        # Stop if a newer upload has already replaced this job
+                        if st.session_state.get("current_tariff_job_id") != job_id:
+                            processing_placeholder.empty()
+                            st.warning("⚠️ This upload was superseded by a newer one.")
+                            break
+
+                        # Fetch latest status from backend
+                        try:
+                            status_data = _fetch_tariff_status(job_id)
+                            st.session_state["tariff_job_status"] = status_data
+                        except Exception:
+                            status_data = st.session_state.get("tariff_job_status", {})
+
+                        step        = status_data.get("step", 0)
+                        total_steps = status_data.get("total_steps", 3)
+                        message     = status_data.get("message", "Starting...")
+                        status      = status_data.get("status", "running")
+                        progress    = int((step / total_steps) * 100) if total_steps else 0
+
+                        # Render overlay with real progress
+                        with processing_placeholder.container():
+                            st.markdown(f"""
+                                <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
+                                     background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
+                                     z-index: 9999; display: flex; align-items: center; justify-content: center;
+                                     pointer-events: all;'>
+                                    <div style='background: white; padding: 40px; border-radius: 10px; 
+                                         text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3); min-width: 420px;'>
+                                        <h2 style='color: #f57c00; margin-bottom: 20px;'>⚡ Processing Tariff Document</h2>
+                                        <p style='font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px;'>{file.name}</p>
+                                        <p style='color: #666; margin-bottom: 8px;'>Step {step}/{total_steps}: {message}</p>
+                                        <div style='width: 100%; background: #e0e0e0; border-radius: 4px; overflow: hidden; height: 8px; margin-bottom: 10px;'>
+                                            <div style='width: {progress}%; height: 100%;
+                                                 background: linear-gradient(90deg, #f57c00, #ffb74d);
+                                                 transition: width 0.5s ease;'></div>
+                                        </div>
+                                        <p style='color: #aaa; font-size: 12px;'>Job ID: {job_id}</p>
                                     </div>
                                 </div>
-                            </div>
-                            <style>
-                            @keyframes loading {{
-                                0% {{ transform: translateX(-100%); }}
-                                50% {{ transform: translateX(100%); }}
-                                100% {{ transform: translateX(-100%); }}
-                            }}
-                            </style>
-                        """.format(file.name), unsafe_allow_html=True)
+                            """, unsafe_allow_html=True)
 
-                    # ---------- RUN PIPELINE ----------
-                    results = _run_tariff_processing(s3_key=s3_key, raw_bill_document_id=tariff_doc_id)
+                        # ── Terminal states ───────────────────────────────────
+                        if status == "completed":
+                            processing_placeholder.empty()
+                            st.markdown("""
+                                <style>
+                                .stApp { pointer-events: auto; }
+                                div[data-testid="stAppViewContainer"] > section { filter: none; }
+                                section[data-testid="stSidebar"] { pointer-events: auto; filter: none; }
+                                </style>
+                            """, unsafe_allow_html=True)
+                            st.session_state["tariff_results"].append({
+                                "name": file.name,
+                                "grouped": status_data.get("grouped_tariffs", ""),
+                                "logic": status_data.get("final_logic", ""),
+                            })
+                            st.rerun()
+                            break
 
+                        if status == "failed":
+                            processing_placeholder.empty()
+                            raise Exception(status_data.get("message", "Pipeline failed."))
 
+                        if status == "cancelled":
+                            processing_placeholder.empty()
+                            st.warning("⚠️ Job was cancelled — a newer upload took over.")
+                            break
+                        # ─────────────────────────────────────────────────────
 
-
-
-
-
-
-
-                    # Clear the processing overlay and re-enable page
-                    processing_placeholder.empty()
-                    st.markdown("""
-                        <style>
-                        .stApp {
-                            pointer-events: auto;
-                        }
-                        div[data-testid="stAppViewContainer"] > section {
-                            filter: none;
-                        }
-                        section[data-testid="stSidebar"] {
-                            pointer-events: auto;
-                            filter: none;
-                        }
-                        </style>
-                    """, unsafe_allow_html=True)
-
-                    # ---------- SAVE RESULTS ----------
-                    st.session_state["tariff_results"].append({
-                        "name": file.name,
-                        "grouped": results["grouped_tariffs"],
-                        "logic": results["final_logic"]
-                    })
-
-                    # ---------- REFRESH ----------
-                    st.rerun()
+                        time.sleep(3)
+                        st.rerun()
 
                 except Exception as e:
                     st.error(f"Error processing {file.name}: {e}")

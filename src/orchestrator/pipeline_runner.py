@@ -2,14 +2,16 @@ from pathlib import Path
 import subprocess
 import sys
 import uuid
+import threading
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.utils.aws_app import file_exists_in_s3, get_s3_key
+from src.utils.job_store import update_job_status, cleanup_job  # ← new import
 
 
-def _run_step(cmd, step_name, timeout=600):
+def _run_step(cmd, step_name, cancel_event: threading.Event, timeout=600):  # ← add cancel_event param
     """
     Run a subprocess step with live output streaming to terminal.
     Captures output into a log file alongside streaming it.
@@ -24,47 +26,59 @@ def _run_step(cmd, step_name, timeout=600):
 
     try:
         with open(log_path, "w") as log_file:
-            result = subprocess.run(
+            process = subprocess.Popen(             # ← Popen instead of run so we can kill it
                 cmd,
-                stdout=subprocess.PIPE,   # capture stdout
-                stderr=subprocess.STDOUT, # merge stderr into stdout
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
                 text=True,
-                timeout=timeout,
-                bufsize=1,                # line buffered
+                bufsize=1,
             )
 
-            # Write to log and print to terminal simultaneously
-            for line in result.stdout.splitlines():
-                print(line)
-                log_file.write(line + "\n")
+            # Stream output line by line, checking cancel between each line
+            for line in process.stdout:
+                print(line, end="")
+                log_file.write(line)
 
-        return result
+                if cancel_event.is_set():           # ← check cancel during streaming
+                    process.kill()
+                    print(f"\n⚠️  {step_name} cancelled — process killed.")
+                    return None                     # ← None signals cancellation to caller
+
+            process.wait(timeout=timeout)
+            return process
 
     except subprocess.TimeoutExpired:
+        process.kill()
         raise RuntimeError(
             f"{step_name} timed out after {timeout} seconds. "
             f"Check log: {log_path}"
         )
 
 
-def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
-
+def run_tariff_pipeline(
+    pdf_path: Path,
+    raw_bill_document_id: int = None,
+    job_id: str = None,                            # ← new param
+    cancel_event: threading.Event = None,          # ← new param
+):
     # ----------------------------------------------------------
     # Setup
     # ----------------------------------------------------------
     pdf_path = Path(pdf_path)
     pdf_filename = pdf_path.name
+    doc_key = str(raw_bill_document_id or pdf_filename)
+
+    # Use provided job_id/cancel_event (from router) or create standalone ones
+    job_id = job_id or str(uuid.uuid4())[:8]
+    cancel_event = cancel_event or threading.Event()
 
     print(f"\nStarting Tariff Pipeline")
     print(f"PDF:  {pdf_path}")
     print(f"Doc ID: {raw_bill_document_id or 'None'}")
+    print(f"Job ID: {job_id}")
 
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF not found: {pdf_path}")
-
-    # Unique job ID to prevent S3 collisions if multiple uploads happen simultaneously
-    job_id = str(uuid.uuid4())[:8]
-    print(f"Job ID: {job_id}")
 
     # ----------------------------------------------------------
     # Resolve script paths
@@ -79,98 +93,108 @@ def run_tariff_pipeline(pdf_path: Path, raw_bill_document_id: int = None):
         if not script.exists():
             raise FileNotFoundError(f"Missing script: {script}")
 
-    # ----------------------------------------------------------
-    # Step 1: Extract text page by page from PDF
-    # ----------------------------------------------------------
-    result = _run_step(
-        cmd=[sys.executable, "-u", str(step1), str(pdf_path)],
-        step_name="Step 1/3: Extracting text from PDF pages",
-        timeout=600,  # 10 minutes — pdfplumber on 684 pages should be well under this
-    )
+    try:
+        # ----------------------------------------------------------
+        # Step 1: Extract text page by page from PDF
+        # ----------------------------------------------------------
+        if cancel_event.is_set():                  # ← check before starting step
+            print("⚠️  Job cancelled before Step 1.")
+            return {"job_id": job_id, "status": "cancelled"}
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Step 1 failed with exit code {result.returncode}.\n"
-            f"Output:\n{result.stdout}"
+        update_job_status(job_id, step=1, message="Extracting text from PDF pages...")
+
+        result = _run_step(
+            cmd=[sys.executable, "-u", str(step1), str(pdf_path)],
+            step_name="Step 1/3: Extracting text from PDF pages",
+            cancel_event=cancel_event,             # ← pass down
+            timeout=600,
         )
 
-    s3_key_raw = get_s3_key("processed", "raw_extracted_tarif.json")
-    if not file_exists_in_s3(s3_key_raw):
-        raise RuntimeError(
-            f"Step 1 completed but raw_extracted_tarif.json not found in S3.\n"
-            f"Expected key: {s3_key_raw}"
+        if result is None:                         # ← None = cancelled inside _run_step
+            return {"job_id": job_id, "status": "cancelled"}
+
+        if result.returncode != 0:
+            raise RuntimeError(f"Step 1 failed with exit code {result.returncode}.")
+
+        s3_key_raw = get_s3_key("processed", "raw_extracted_tarif.json")
+        if not file_exists_in_s3(s3_key_raw):
+            raise RuntimeError(f"Step 1 completed but raw_extracted_tarif.json not found in S3.")
+
+        print(f"\n✅ Step 1 complete. Output in S3: {s3_key_raw}")
+
+        # ----------------------------------------------------------
+        # Step 2: Group extracted text by service classification
+        # ----------------------------------------------------------
+        if cancel_event.is_set():                  # ← check before starting step
+            print("⚠️  Job cancelled before Step 2.")
+            return {"job_id": job_id, "status": "cancelled"}
+
+        update_job_status(job_id, step=2, message="Grouping tariffs by service class...")
+
+        result = _run_step(
+            cmd=[sys.executable, "-u", str(step2)],
+            step_name="Step 2/3: Grouping tariffs by service class",
+            cancel_event=cancel_event,             # ← pass down
+            timeout=120,
         )
 
-    print(f"\n✅ Step 1 complete. Output in S3: {s3_key_raw}")
+        if result is None:
+            return {"job_id": job_id, "status": "cancelled"}
 
-    # ----------------------------------------------------------
-    # Step 2: Group extracted text by service classification
-    # ----------------------------------------------------------
-    result = _run_step(
-        cmd=[sys.executable, "-u", str(step2)],
-        step_name="Step 2/3: Grouping tariffs by service class",
-        timeout=120,  # 2 minutes — this is pure text processing, should be fast
-    )
+        if result.returncode != 0:
+            raise RuntimeError(f"Step 2 failed with exit code {result.returncode}.")
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Step 2 failed with exit code {result.returncode}.\n"
-            f"Output:\n{result.stdout}"
+        s3_key_grouped = get_s3_key("processed", "grouped_tariffs.json")
+        if not file_exists_in_s3(s3_key_grouped):
+            raise RuntimeError(f"Step 2 completed but grouped_tariffs.json not found in S3.")
+
+        print(f"\n✅ Step 2 complete. Output in S3: {s3_key_grouped}")
+
+        # ----------------------------------------------------------
+        # Step 3: Extract tariff logic using LLM
+        # ----------------------------------------------------------
+        if cancel_event.is_set():                  # ← check before starting step
+            print("⚠️  Job cancelled before Step 3.")
+            return {"job_id": job_id, "status": "cancelled"}
+
+        update_job_status(job_id, step=3, message="Extracting tariff logic via LLM...")
+
+        cmd_step3 = [sys.executable, "-u", str(step3), str(pdf_path)]
+        if raw_bill_document_id is not None:
+            cmd_step3.append(str(raw_bill_document_id))
+
+        result = _run_step(
+            cmd=cmd_step3,
+            step_name="Step 3/3: Extracting tariff logic via LLM",
+            cancel_event=cancel_event,             # ← pass down
+            timeout=1800,
         )
 
-    s3_key_grouped = get_s3_key("processed", "grouped_tariffs.json")
-    if not file_exists_in_s3(s3_key_grouped):
-        raise RuntimeError(
-            f"Step 2 completed but grouped_tariffs.json not found in S3.\n"
-            f"Expected key: {s3_key_grouped}"
-        )
+        if result is None:
+            return {"job_id": job_id, "status": "cancelled"}
 
-    print(f"\n✅ Step 2 complete. Output in S3: {s3_key_grouped}")
+        if result.returncode != 0:
+            raise RuntimeError(f"Step 3 failed with exit code {result.returncode}.")
 
-    # ----------------------------------------------------------
-    # Step 3: Extract tariff logic using LLM
-    # ----------------------------------------------------------
+        s3_key_logic = get_s3_key("processed", "final_logic_output.json")
+        if not file_exists_in_s3(s3_key_logic):
+            raise RuntimeError(f"Step 3 completed but final_logic_output.json not found in S3.")
 
-    # Fix: pass raw_bill_document_id as sys.argv[2] so the script can read it
-    cmd_step3 = [sys.executable, "-u", str(step3), str(pdf_path)]
-    if raw_bill_document_id is not None:
-        cmd_step3.append(str(raw_bill_document_id))
+        print(f"\n✅ Step 3 complete. Output in S3: {s3_key_logic}")
 
-    result = _run_step(
-        cmd=cmd_step3,
-        step_name="Step 3/3: Extracting tariff logic via LLM",
-        timeout=1800,  # 30 minutes — LLM calls per SC code, this is the slow step
-    )
+        # ----------------------------------------------------------
+        # Done
+        # ----------------------------------------------------------
+        print("\n" + "=" * 60)
+        print("  TARIFF PIPELINE COMPLETED SUCCESSFULLY!")
+        print("=" * 60)
 
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"Step 3 failed with exit code {result.returncode}.\n"
-            f"Output:\n{result.stdout}"
-        )
+        return {
+            "job_id": job_id,
+            "status": "completed",
+            "grouped_tariffs": s3_key_grouped,
+            "final_logic": s3_key_logic,
+        }
 
-    s3_key_logic = get_s3_key("processed", "final_logic_output.json")
-    if not file_exists_in_s3(s3_key_logic):
-        raise RuntimeError(
-            f"Step 3 completed but final_logic_output.json not found in S3.\n"
-            f"Expected key: {s3_key_logic}"
-        )
-
-    print(f"\n✅ Step 3 complete. Output in S3: {s3_key_logic}")
-
-    # ----------------------------------------------------------
-    # Done
-    # ----------------------------------------------------------
-    print("\n" + "=" * 60)
-    print("  TARIFF PIPELINE COMPLETED SUCCESSFULLY!")
-    print("=" * 60)
-    print(f"  PDF:             {pdf_filename}")
-    print(f"  Job ID:          {job_id}")
-    print(f"  Grouped Tariffs: s3://{s3_key_grouped}")
-    print(f"  Final Logic:     s3://{s3_key_logic}")
-    print("=" * 60 + "\n")
-
-    return {
-        "job_id": job_id,
-        "grouped_tariffs": s3_key_grouped,
-        "final_logic": s3_key_logic,
-    }
+    finally:
+        cleanup_job(doc_key, job_id)               # ← always clean up active job registry
