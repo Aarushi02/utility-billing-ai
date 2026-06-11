@@ -4,8 +4,12 @@ tariff_lock = Lock()
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
+import threading
 
 from src.services.processing_service import ProcessingService
+from src.utils.job_store import register_job, complete_job, fail_job, get_job_status
+from src.utils.aws_app import download_to_temp
+from src.orchestrator.pipeline_runner import run_tariff_pipeline
 
 
 class BillProcessRequest(BaseModel):
@@ -24,9 +28,14 @@ class TariffProcessRequest(BaseModel):
 
 
 class TariffProcessResponse(BaseModel):
-    grouped_tariffs: str | None = None
-    final_logic: str | None = None
+    job_id: str
+    status: str
 
+
+# ── Active thread registry ────────────────────────────────────────────────────
+_active_threads: dict[str, threading.Thread] = {}
+_threads_lock = threading.Lock()
+# ─────────────────────────────────────────────────────────────────────────────
 
 router = APIRouter(prefix="/processing")
 service = ProcessingService()
@@ -38,19 +47,47 @@ def run_bill_processing(payload: BillProcessRequest) -> BillProcessResponse:
     return BillProcessResponse(**result)
 
 
+# ── New: status endpoint BEFORE parameterised routes ─────────────────────────
+@router.get("/tariffs/status/{job_id}")
+def get_tariff_status(job_id: str) -> dict:
+    status = get_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return status
+
+
+# ── Replaced: last-write-wins threaded endpoint ───────────────────────────────
 @router.post("/tariffs/run", response_model=TariffProcessResponse)
 def run_tariff_processing(payload: TariffProcessRequest) -> TariffProcessResponse:
-    
-    if tariff_lock.locked():
-        raise HTTPException(
-            status_code=429,
-            detail="Tariff processing already running"
-        )
+    doc_key = str(payload.raw_bill_document_id or payload.s3_key)
 
-    with tariff_lock:
-        result = service.process_tariff(
-            payload.s3_key,
-            raw_bill_document_id=payload.raw_bill_document_id
-        )
+    # Cancel any existing job for this doc, register new one
+    cancel_event, job_id = register_job(doc_key)
 
-    return result
+    def _run():
+        try:
+            pdf_path = download_to_temp(payload.s3_key)
+            if not pdf_path:
+                fail_job(job_id, f"Failed to download PDF from S3: {payload.s3_key}")
+                return
+
+            run_tariff_pipeline(
+                pdf_path=pdf_path,
+                raw_bill_document_id=payload.raw_bill_document_id,
+                job_id=job_id,
+                cancel_event=cancel_event,
+            )
+            complete_job(job_id)
+
+        except Exception as e:
+            fail_job(job_id, str(e))
+        finally:
+            with _threads_lock:
+                _active_threads.pop(doc_key, None)
+
+    thread = threading.Thread(target=_run, daemon=True)
+    with _threads_lock:
+        _active_threads[doc_key] = thread
+    thread.start()
+
+    return TariffProcessResponse(job_id=job_id, status="started")
