@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
 COPY app /workspace/app
 COPY src /workspace/src
-COPY data /workspace/data
+#COPY data /workspace/data
 
 ENV PYTHONPATH=/workspace
 

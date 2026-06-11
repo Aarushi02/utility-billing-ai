@@ -22,7 +22,7 @@ COPY requirements.txt /workspace/requirements.txt
 RUN pip install --no-cache-dir -r /workspace/requirements.txt
 
 COPY src /workspace/src
-COPY data /workspace/data
+#COPY data /workspace/data
 
 ENV PYTHONPATH=/workspace
 
