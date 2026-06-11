@@ -5,7 +5,7 @@ import threading
 from src.services.tariff_service import TariffService
 from src.utils.job_store import register_job, complete_job, get_job_status, cleanup_job
 from src.orchestrator.pipeline_runner import run_tariff_pipeline
-
+from src.utils.aws_app import download_to_temp
 
 class TariffScCodesResponse(BaseModel):
     sc_codes: list[str]
@@ -26,7 +26,7 @@ class TariffLogicResponse(BaseModel):
 class TariffRunRequest(BaseModel):
     doc_id: int | None = None
     filename: str
-    pdf_path: str
+    s3_key: str
 
 
 class TariffRunResponse(BaseModel):
@@ -45,6 +45,13 @@ service = TariffService()
 
 
 # ── Existing endpoints (unchanged) ───────────────────────────────────────────
+
+@router.get("/status/{job_id}")
+def get_run_status(job_id: str) -> dict:
+    status = get_job_status(job_id)
+    if not status:
+        raise HTTPException(status_code=404, detail="Job not found")
+    return status
 
 @router.get("/sc-codes", response_model=TariffScCodesResponse)
 def get_sc_codes() -> TariffScCodesResponse:
@@ -79,15 +86,14 @@ def get_logic(sc_code: str, effective_date: str) -> TariffLogicResponse:
 @router.post("/run", response_model=TariffRunResponse)
 def run_tariff(request: TariffRunRequest) -> TariffRunResponse:
     doc_key = str(request.doc_id or request.filename)
-
-    # Register new job — cancels any existing job for this doc_key
     cancel_event, job_id = register_job(doc_key)
 
-    # Run pipeline in a background thread so the endpoint returns immediately
     def _run():
-        try:
+        try:  
+            pdf_path = download_to_temp(request.s3_key)
+
             run_tariff_pipeline(
-                pdf_path=request.pdf_path,
+                pdf_path=pdf_path,
                 raw_bill_document_id=request.doc_id,
                 job_id=job_id,
                 cancel_event=cancel_event,
@@ -108,9 +114,3 @@ def run_tariff(request: TariffRunRequest) -> TariffRunResponse:
     return TariffRunResponse(job_id=job_id, status="started")
 
 
-@router.get("/status/{job_id}")
-def get_run_status(job_id: str) -> dict:
-    status = get_job_status(job_id)
-    if not status:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return status

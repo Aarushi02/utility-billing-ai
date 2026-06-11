@@ -188,7 +188,7 @@ def insert_raw_bill_document(metadata: dict):
         if existing_doc:
             error_msg = f"Duplicate bill detected: '{file_name}' already exists (id={existing_doc.id})"
             logger.error(error_msg)
-            raise ValueError(error_msg)
+            return existing_doc.id
 
         # ----------------------------------------------------
         # Step 2: Insert new document if no duplicate found

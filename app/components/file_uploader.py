@@ -15,11 +15,11 @@ from src.utils.aws_app import (
 API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
 
 
-def _post_api_json(path: str, payload: dict):
+def _post_api_json(path: str, payload: dict, timeout: int = 30):
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=30)
+            response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=timeout)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:
@@ -42,6 +42,7 @@ def _run_bill_processing(s3_key: str, document_id: int | None = None) -> dict:
     return _post_api_json(
         "/api/v1/processing/bills/run",
         {"s3_key": s3_key, "document_id": document_id},
+        timeout = 600,
     )
 
 
@@ -52,7 +53,7 @@ def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None)
         f"{API_BASE_URL}/api/v1/processing/tariffs/run",
         json={
             "s3_key": s3_key,
-            "raw_bill_document_id": raw_bill_document_id,
+            "doc_id": raw_bill_document_id,
             "filename": s3_key.split("/")[-1],
         },
         timeout=30,
