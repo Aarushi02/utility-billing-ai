@@ -15,11 +15,11 @@ from src.utils.aws_app import (
 API_BASE_URL = get_env("API_BASE_URL", "http://localhost:8000")
 
 
-def _post_api_json(path: str, payload: dict, timeout: int = 30):
+def _post_api_json(path: str, payload: dict):
     last_exc: Exception | None = None
     for attempt in range(3):
         try:
-            response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=timeout)
+            response = requests.post(f"{API_BASE_URL}{path}", json=payload, timeout=30)
             response.raise_for_status()
             return response.json()
         except requests.RequestException as exc:
@@ -42,21 +42,18 @@ def _run_bill_processing(s3_key: str, document_id: int | None = None) -> dict:
     return _post_api_json(
         "/api/v1/processing/bills/run",
         {"s3_key": s3_key, "document_id": document_id},
-        timeout = 600,
     )
 
 
-# ── UPDATED: returns job_id immediately instead of blocking ──────────────────
 def _run_tariff_processing(s3_key: str, raw_bill_document_id: int | None = None) -> str:
-    """Triggers tariff pipeline. Returns job_id immediately — backend cancels any older job."""
+    """Triggers tariff pipeline. Returns job_id immediately."""
     response = requests.post(
         f"{API_BASE_URL}/api/v1/processing/tariffs/run",
         json={
             "s3_key": s3_key,
-            "doc_id": raw_bill_document_id,
-            "filename": s3_key.split("/")[-1],
+            "raw_bill_document_id": raw_bill_document_id,
         },
-        timeout=30,
+        timeout=10,
     )
     response.raise_for_status()
     return response.json()["job_id"]
@@ -70,7 +67,6 @@ def _fetch_tariff_status(job_id: str) -> dict:
     )
     response.raise_for_status()
     return response.json()
-# ─────────────────────────────────────────────────────────────────────────────
 
 
 def render_file_uploader():
@@ -83,16 +79,12 @@ def render_file_uploader():
         st.session_state["bill_results"] = None
     if "tariff_results" not in st.session_state:
         st.session_state["tariff_results"] = []
-    if "current_tariff_job_id" not in st.session_state:     # ← new
-        st.session_state["current_tariff_job_id"] = None
-    if "tariff_job_status" not in st.session_state:         # ← new
-        st.session_state["tariff_job_status"] = {}
     # ─────────────────────────────────────────────────────────────────────────
 
     tab1, tab2 = st.tabs(["📄 Bill Documents", "⚡ Tariff Documents"])
 
     # =========================================================================
-    # TAB 1: Bill Upload (unchanged)
+    # TAB 1: Bill Upload
     # =========================================================================
     with tab1:
         st.subheader("📄 Bill Documents Management")
@@ -141,17 +133,17 @@ def render_file_uploader():
 
                 with processing_placeholder.container():
                     st.markdown("""
-                        <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
+                        <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
                              background: rgba(0, 0, 0, 0.7); backdrop-filter: blur(8px);
                              z-index: 9999; display: flex; align-items: center; justify-content: center;
                              pointer-events: all;'>
-                            <div style='background: white; padding: 40px; border-radius: 10px; 
+                            <div style='background: white; padding: 40px; border-radius: 10px;
                                  text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3);'>
                                 <h2 style='color: #1f77b4; margin-bottom: 20px;'>🔄 Processing Bill Document</h2>
                                 <p style='font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px;'>{}</p>
                                 <p style='color: #666; margin-bottom: 20px;'>Please wait while we extract and validate the billing data...</p>
                                 <div style='width: 100%; height: 4px; background: #e0e0e0; border-radius: 2px; overflow: hidden;'>
-                                    <div style='width: 50%; height: 100%; background: linear-gradient(90deg, #1f77b4, #4fc3f7); 
+                                    <div style='width: 50%; height: 100%; background: linear-gradient(90deg, #1f77b4, #4fc3f7);
                                          animation: loading 1.5s ease-in-out infinite;'></div>
                                 </div>
                             </div>
@@ -234,7 +226,7 @@ def render_file_uploader():
                 st.rerun()
 
     # =========================================================================
-    # TAB 2: Tariff Upload — last-write-wins pattern
+    # TAB 2: Tariff Upload — simple blocking spinner, no rerun loop
     # =========================================================================
     with tab2:
         st.subheader("Upload Tariff Documents")
@@ -247,7 +239,7 @@ def render_file_uploader():
             key="tariff_uploader"
         )
 
-        # ── Show previous results ─────────────────────────────────────────────
+        # ── Show completed results ────────────────────────────────────────────
         if st.session_state["tariff_results"]:
             st.markdown("### 📦 Processed Tariff Files")
             for result in st.session_state["tariff_results"]:
@@ -283,100 +275,41 @@ def render_file_uploader():
                         st.error(f"Error logging tariff file {file.name}: {e}")
                         tariff_doc_id = None
 
-                    # ---------- BLUR BACKGROUND ----------
-                    st.markdown("""
-                        <style>
-                        .stApp { pointer-events: none; }
-                        div[data-testid="stAppViewContainer"] > section { filter: blur(5px); }
-                        section[data-testid="stSidebar"] { pointer-events: none; filter: blur(5px); }
-                        </style>
-                    """, unsafe_allow_html=True)
-
-                    processing_placeholder = st.empty()
-
-                    # ---------- TRIGGER PIPELINE — returns job_id immediately ----------
+                    # ---------- TRIGGER PIPELINE ----------
                     job_id = _run_tariff_processing(
                         s3_key=s3_key,
                         raw_bill_document_id=tariff_doc_id,
                     )
 
-                    # Last-write-wins: store latest job_id so any stale poll loop stops
-                    st.session_state["current_tariff_job_id"] = job_id
-                    st.session_state["tariff_job_status"] = {}
+                    # ---------- SIMPLE BLOCKING SPINNER ----------
+                    with st.spinner(f"⚡ Processing {file.name}... this may take 20–30 minutes."):
+                        while True:
+                            time.sleep(5)
+                            try:
+                                status_data = _fetch_tariff_status(job_id)
+                            except Exception:
+                                continue   # transient fetch error — keep polling
 
-                    # ---------- POLL WITH LIVE PROGRESS BAR ----------
-                    while True:
-                        # Stop if a newer upload has already replaced this job
-                        if st.session_state.get("current_tariff_job_id") != job_id:
-                            processing_placeholder.empty()
-                            st.warning("⚠️ This upload was superseded by a newer one.")
-                            break
+                            status = status_data.get("status")
 
-                        # Fetch latest status from backend
-                        try:
-                            status_data = _fetch_tariff_status(job_id)
-                            st.session_state["tariff_job_status"] = status_data
-                        except Exception:
-                            status_data = st.session_state.get("tariff_job_status", {})
+                            if status == "completed":
+                                st.session_state["tariff_results"].append({
+                                    "name": file.name,
+                                    "grouped": status_data.get("grouped_tariffs", ""),
+                                    "logic": status_data.get("final_logic", ""),
+                                })
+                                break
 
-                        step        = status_data.get("step", 0)
-                        total_steps = status_data.get("total_steps", 3)
-                        message     = status_data.get("message", "Starting...")
-                        status      = status_data.get("status", "running")
-                        progress    = int((step / total_steps) * 100) if total_steps else 0
+                            if status == "failed":
+                                raise Exception(
+                                    status_data.get("message", "Pipeline failed.")
+                                )
 
-                        # Render overlay with real progress
-                        with processing_placeholder.container():
-                            st.markdown(f"""
-                                <div style='position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; 
-                                     background: rgba(0,0,0,0.7); backdrop-filter: blur(8px);
-                                     z-index: 9999; display: flex; align-items: center; justify-content: center;
-                                     pointer-events: all;'>
-                                    <div style='background: white; padding: 40px; border-radius: 10px; 
-                                         text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.3); min-width: 420px;'>
-                                        <h2 style='color: #f57c00; margin-bottom: 20px;'>⚡ Processing Tariff Document</h2>
-                                        <p style='font-size: 18px; font-weight: bold; color: #333; margin-bottom: 10px;'>{file.name}</p>
-                                        <p style='color: #666; margin-bottom: 8px;'>Step {step}/{total_steps}: {message}</p>
-                                        <div style='width: 100%; background: #e0e0e0; border-radius: 4px; overflow: hidden; height: 8px; margin-bottom: 10px;'>
-                                            <div style='width: {progress}%; height: 100%;
-                                                 background: linear-gradient(90deg, #f57c00, #ffb74d);
-                                                 transition: width 0.5s ease;'></div>
-                                        </div>
-                                        <p style='color: #aaa; font-size: 12px;'>Job ID: {job_id}</p>
-                                    </div>
-                                </div>
-                            """, unsafe_allow_html=True)
+                            if status == "cancelled":
+                                st.warning("⚠️ Job was superseded by a newer upload.")
+                                break
 
-                        # ── Terminal states ───────────────────────────────────
-                        if status == "completed":
-                            processing_placeholder.empty()
-                            st.markdown("""
-                                <style>
-                                .stApp { pointer-events: auto; }
-                                div[data-testid="stAppViewContainer"] > section { filter: none; }
-                                section[data-testid="stSidebar"] { pointer-events: auto; filter: none; }
-                                </style>
-                            """, unsafe_allow_html=True)
-                            st.session_state["tariff_results"].append({
-                                "name": file.name,
-                                "grouped": status_data.get("grouped_tariffs", ""),
-                                "logic": status_data.get("final_logic", ""),
-                            })
-                            st.rerun()
-                            break
-
-                        if status == "failed":
-                            processing_placeholder.empty()
-                            raise Exception(status_data.get("message", "Pipeline failed."))
-
-                        if status == "cancelled":
-                            processing_placeholder.empty()
-                            st.warning("⚠️ Job was cancelled — a newer upload took over.")
-                            break
-                        # ─────────────────────────────────────────────────────
-
-                        time.sleep(3)
-                        st.rerun()
+                    st.rerun()   # single rerun at the end to show results
 
                 except Exception as e:
                     st.error(f"Error processing {file.name}: {e}")
