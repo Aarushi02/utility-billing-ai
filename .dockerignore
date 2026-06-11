@@ -1,0 +1,8 @@
+data/
+logs/
+*.pdf
+*.json
+.git
+__pycache__
+*.pyc
+.env
