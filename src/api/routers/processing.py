@@ -1,7 +1,3 @@
-from threading import Lock
-
-tariff_lock = Lock()
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 import threading
@@ -32,10 +28,8 @@ class TariffProcessResponse(BaseModel):
     status: str
 
 
-# ── Active thread registry ────────────────────────────────────────────────────
 _active_threads: dict[str, threading.Thread] = {}
 _threads_lock = threading.Lock()
-# ─────────────────────────────────────────────────────────────────────────────
 
 router = APIRouter(prefix="/processing")
 service = ProcessingService()
@@ -47,7 +41,7 @@ def run_bill_processing(payload: BillProcessRequest) -> BillProcessResponse:
     return BillProcessResponse(**result)
 
 
-# ── New: status endpoint BEFORE parameterised routes ─────────────────────────
+# ── Status endpoint BEFORE /tariffs/run to avoid route conflicts ──────────────
 @router.get("/tariffs/status/{job_id}")
 def get_tariff_status(job_id: str) -> dict:
     status = get_job_status(job_id)
@@ -56,12 +50,11 @@ def get_tariff_status(job_id: str) -> dict:
     return status
 
 
-# ── Replaced: last-write-wins threaded endpoint ───────────────────────────────
+# ── Last-write-wins: cancels old job, starts new one in background thread ─────
 @router.post("/tariffs/run", response_model=TariffProcessResponse)
 def run_tariff_processing(payload: TariffProcessRequest) -> TariffProcessResponse:
     doc_key = str(payload.raw_bill_document_id or payload.s3_key)
 
-    # Cancel any existing job for this doc, register new one
     cancel_event, job_id = register_job(doc_key)
 
     def _run():
