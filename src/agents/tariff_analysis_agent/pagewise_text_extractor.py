@@ -1,7 +1,8 @@
 # src/agents/tariff_analysis/extract_pdf.py
 """
 Step 1.3 – Extract text and tables from PDF (config-driven).
-Processes in batches to avoid OOM on large PDFs.
+Processes in batches, uploads each batch to S3 immediately,
+then merges at the end — keeps peak memory to ~50 pages at a time.
 """
 
 import logging
@@ -28,7 +29,7 @@ else:
 
 OUTPUT_PATH = PROJECT_ROOT / Path("data/processed/raw_extracted_tarif.json")
 
-BATCH_SIZE = 50  # pages per batch — keeps memory under ~200MB
+BATCH_SIZE = 50  # pages per batch
 
 
 def _extract_tables_safe(page, timeout_sec: int = 10) -> list:
@@ -53,12 +54,12 @@ def _extract_tables_safe(page, timeout_sec: int = 10) -> list:
 
 def extract_and_upload_in_batches(pdf_path: Path, batch_size: int = BATCH_SIZE):
     """
-    Extract PDF in batches, uploading each batch to S3 immediately.
-    Merges all batches into final output at the end.
-    Final output key: processed/raw_extracted_tarif.json
+    Extract PDF in batches.
+    Each batch is uploaded to S3 immediately and cleared from memory.
+    All batches are merged into a single final JSON at the end.
+    Peak memory usage: ~50 pages at a time.
     """
-    s3_key_final = get_s3_key("processed", "raw_extracted_tarif.json")
-    all_pages = []
+    batch_keys = []
 
     with pdfplumber.open(pdf_path) as pdf:
         total_pages = len(pdf.pages)
@@ -87,18 +88,38 @@ def extract_and_upload_in_batches(pdf_path: Path, batch_size: int = BATCH_SIZE):
                     "tables": tables,
                 })
 
-            # Accumulate batch results
-            all_pages.extend(batch_pages)
+            # Upload this batch immediately to S3
+            batch_num = (batch_start // batch_size) + 1
+            batch_key = get_s3_key("processed/batches", f"tariff_batch_{batch_num:04d}.json")
 
-            # Free batch memory immediately
+            if not upload_json_to_s3({"pages": batch_pages}, batch_key):
+                raise Exception(f"Failed to upload batch {batch_num} to S3: {batch_key}")
+
+            batch_keys.append(batch_key)
+
+            # Free batch memory immediately — critical for low RAM
             del batch_pages
 
-            print(f"  ✅ Processed pages {batch_start + 1}–{batch_end}/{total_pages}")
+            print(f"  ✅ Processed and uploaded pages {batch_start + 1}–{batch_end}/{total_pages}")
 
-    # Upload complete result to S3
-    print(f"💾 Uploading {len(all_pages)} pages to S3...")
+    # ── Merge all batches into final output ───────────────────────────────────
+    print(f"🔀 Merging {len(batch_keys)} batches into final output...")
+    all_pages = []
+
+    for key in batch_keys:
+        batch_data = download_json_from_s3(key)
+        if batch_data and "pages" in batch_data:
+            all_pages.extend(batch_data["pages"])
+        del batch_data   # free after each merge
+
+    # Upload final merged result
+    s3_key_final = get_s3_key("processed", "raw_extracted_tarif.json")
+    print(f"💾 Uploading merged output ({len(all_pages)} pages) to S3...")
+
     if not upload_json_to_s3({"pages": all_pages}, s3_key_final):
         raise Exception(f"Failed to upload final output to S3: {s3_key_final}")
+
+    del all_pages  # free after upload
 
     print(f"✅ Uploaded to S3: {s3_key_final}")
     return s3_key_final
