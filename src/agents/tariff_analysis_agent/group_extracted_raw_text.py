@@ -11,29 +11,32 @@ from src.utils.aws_app import download_json_from_s3, upload_json_to_s3, get_s3_k
 
 def parse_effective_date(text_block):
     """
-    Scans a text block for the 'Effective Date'.
-    Patterns to look for:
-    1. "Effective Date: MM/DD/YYYY"
-    2. "INITIAL EFFECTIVE DATE: MONTH DD, YYYY"
+    Returns the MOST RECENT effective date found in the text block,
+    since a section's full_text may contain multiple historical revisions.
     """
-    # Pattern 1: MM/DD/YYYY (e.g., 09/01/2025)
-    match_short = re.search(r"Effective Date:\s*(\d{2}/\d{2}/\d{4})", text_block, re.IGNORECASE)
-    if match_short:
-        return match_short.group(1)
+    found_dates = []
 
-    # Pattern 2: Long Format (e.g., SEPTEMBER 1, 2025)
-    match_long = re.search(r"EFFECTIVE DATE:\s*([A-Z]+\s+\d{1,2},\s+\d{4})", text_block, re.IGNORECASE)
-    if match_long:
+    # Pattern 1: MM/DD/YYYY
+    for match in re.finditer(r"Effective Date:\s*(\d{2}/\d{2}/\d{4})", text_block, re.IGNORECASE):
         try:
-            date_str = match_long.group(1)
-            # Clean up extra spaces
-            date_str = re.sub(r'\s+', ' ', date_str)
-            dt = datetime.strptime(date_str, "%B %d, %Y")
-            return dt.strftime("%Y-%m-%d")
-        except Exception as e:
+            dt = datetime.strptime(match.group(1), "%m/%d/%Y")
+            found_dates.append(dt)
+        except:
             pass
-            
-    return None
+
+    # Pattern 2: Long format (e.g., SEPTEMBER 1, 2025)
+    for match in re.finditer(r"EFFECTIVE DATE:\s*([A-Z]+\s+\d{1,2},\s+\d{4})", text_block, re.IGNORECASE):
+        try:
+            date_str = re.sub(r'\s+', ' ', match.group(1))
+            dt = datetime.strptime(date_str, "%B %d, %Y")
+            found_dates.append(dt)
+        except:
+            pass
+
+    if found_dates:
+        return max(found_dates).strftime("%m/%d/%Y")  # most recent
+
+    return None  
 
 def group_tariffs_v3(input_file, output_file):
     print(f"Loading {input_file} from S3...")
