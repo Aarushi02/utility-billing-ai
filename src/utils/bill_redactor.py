@@ -1,5 +1,27 @@
 import hashlib
 import hmac
+import os
+
+TOKEN_SECRET = os.environ.get("BILL_TOKEN_SECRET", "").encode()
+
+if not TOKEN_SECRET:
+    raise RuntimeError(
+        "BILL_TOKEN_SECRET is not set. Add it to your .env file "
+        "(see .env.example) before running the validation pipeline."
+    )
+
+
+def tokenize(value: str, prefix: str = "TOK") -> str:
+    """Deterministically hash an identifier into a stable, non-reversible token.
+
+    Example:
+        tokenize("1120031219", prefix="ACCT") -> "ACCT_3f9a2b7c1d04"
+    """
+    if not value:
+        return f"{prefix}_UNKNOWN"
+    digest = hmac.new(TOKEN_SECRET, value.strip().encode(), hashlib.sha256).hexdigest()
+    return f"{prefix}_{digest[:12]}"import hashlib
+import hmac
 import json
 import os
 from dataclasses import dataclass, field, asdict
@@ -7,9 +29,6 @@ from typing import Optional
 
 
 # Tokenization
-# Use an HMAC secret (not a bare hash) so tokens can't be reversed by brute
-# forcing account number formats. Store this in an env var / secrets manager,
-# never in source control.
 TOKEN_SECRET = os.environ.get("BILL_TOKEN_SECRET", "").encode()
 
 if not TOKEN_SECRET:
