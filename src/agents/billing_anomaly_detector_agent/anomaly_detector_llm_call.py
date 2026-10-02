@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import sys
 
+
 # When running this module directly (python src/agents/validation/llm_bill_validator.py)
 # ensure the repository root is on sys.path so `from src...` imports resolve.
 # The file is at <repo>/src/agents/validation/llm_bill_validator.py, so parents[3]
@@ -19,6 +20,7 @@ from src.utils.config import OPENAI_API_KEY, OPENAI_MODEL
 from src.database.utils.anomelies_and_bill_validation_utils import insert_bill_validation_result
 from src.database.utils.user_bills_utils import fetch_user_bills
 from src.utils.logger import get_logger
+from src.utils.bill_redactor import tokenize
 
 
 logger = get_logger(__name__)
@@ -241,33 +243,23 @@ def dataframe_to_bill_dicts(df: pd.DataFrame) -> list[dict]:
 
         customer_name = row.get("customer", "")
         municipal_flag = is_municipality_customer(customer_name)
+        account_token = tokenize(str(row.get("bill_account", "")), prefix="ACCT")
 
         records.append(
             {
-                "bill_id": int(row["id"]),
+               "bill_id": int(row["id"]),
                 "period_start": None,
                 "period_end": row.get("read_date"),
                 "bill_days": row.get("days_used"),
                 "kwh_usage": row.get("billed_kwh"),
                 "kw_demand": row.get("billed_demand"),
-
                 "total_amount": row.get("bill_amount"),
                 "sales_tax_amount": row.get("sales_tax_amt"),
                 "load_factor": row.get("load_factor"),
-
-                # FOUND AUTOMATICALLY:
                 "is_municipality": municipal_flag,
-
-                # You can add holiday logic later if needed:
                 "is_holiday_month": False,
-
-                # This lets the LLM skip R5 automatically
                 "account_has_real_demand": any_demand,
-
-                "notes": (
-                    f"account={row.get('bill_account')}, "
-                    f"customer={customer_name}, "
-                    f"read_date={row.get('read_date')}"
+                "notes": f"account_token={account_token}, read_date={row.get('read_date')}",
                 ),
             }
         )
