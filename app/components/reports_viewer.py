@@ -119,9 +119,12 @@ def render_report_viewer():
     sc_code = ALLOWED_SC_MAP[sc_label]
 
     grid_key = f"override_grid_{account}_{sc_code}"
+    ver_key = f"editor_ver_{account}_{sc_code}"
     selection_key = "report_selection_key"
     current_selection = (account, sc_code)
     previous_selection = st.session_state.get(selection_key)
+
+    st.session_state.setdefault(ver_key, 0)
 
     # Load grid from API only when account / service class changes
     if previous_selection != current_selection or grid_key not in st.session_state:
@@ -145,9 +148,13 @@ def render_report_viewer():
 
     st.subheader("Expected Bill Calculator (TRA / RDM Overrides)")
 
+    # The base dataframe (session_state[grid_key]) stays frozen while editing.
+    # It only changes on API load or after a successful save. The editor keeps
+    # the user's edits as a delta on top of it, so feeding `edited` back in as
+    # the input would reset the widget and force values to be retyped.
     edited = st.data_editor(
         st.session_state[grid_key],
-        key=f"editor_{account}_{sc_code}",
+        key=f"editor_{account}_{sc_code}_{st.session_state[ver_key]}",
         num_rows="fixed",
         use_container_width=True,
         column_config={
@@ -166,8 +173,8 @@ def render_report_viewer():
         },
     )
 
-    # Only update local session state here. Do not save yet.
-    st.session_state[grid_key] = _normalize_grid_df(edited)
+    # Working copy used for Save and Calculate. Not written back to the base.
+    current_df = _normalize_grid_df(edited)
 
     st.caption("Edit all values first, then click Save Overrides.")
 
@@ -175,7 +182,7 @@ def render_report_viewer():
 
     with c1:
         if st.button("Save Overrides", type="primary", use_container_width=True):
-            payload_rows = st.session_state[grid_key].to_dict(orient="records")
+            payload_rows = current_df.to_dict(orient="records")
 
             try:
                 result = _post_api_json(
@@ -195,6 +202,10 @@ def render_report_viewer():
 
             st.session_state[grid_key] = _normalize_grid_df(refreshed_df)
 
+            # New base data: bump the version so the editor starts clean
+            # instead of replaying old edits onto the refreshed grid.
+            st.session_state[ver_key] += 1
+
             # Force one clean reload cycle next run so UI and API stay in sync
             st.session_state[selection_key] = None
 
@@ -206,7 +217,7 @@ def render_report_viewer():
             st.session_state.run_override_calc = True
 
     if st.session_state.run_override_calc:
-        payload_rows = st.session_state[grid_key].to_dict(orient="records")
+        payload_rows = current_df.to_dict(orient="records")
 
         try:
             result = _post_api_json(
