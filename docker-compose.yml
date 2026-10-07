@@ -30,6 +30,7 @@ services:
     environment:
       API_BASE_URL: http://api:8000
       LOG_SOURCE: streamlit
+      STREAMLIT_SERVER_FILE_WATCHER_TYPE: none
       VA_STREAMLIT_URL: /va
     depends_on:
       api:
