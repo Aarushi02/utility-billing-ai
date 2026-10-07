@@ -1,3 +1,4 @@
+from fastapi import HTTPException
 from fastapi import APIRouter
 from fastapi.encoders import jsonable_encoder
 from typing import Literal
@@ -125,3 +126,15 @@ def save_overrides(payload: ReportsSaveRequest):
         "sc_code": payload.sc_code,
         "rows": refreshed_rows,
     }
+
+@router.post("/calculate", response_model=ReportsCalculateResponse)
+def calculate_expected_bill(payload: ReportsCalculateRequest):
+    try:
+        return service.calculate_expected_bill(
+            account_id=payload.account_id,
+            sc_code=payload.sc_code,
+            rows=[row.model_dump() for row in payload.rows],
+        )
+    except RuntimeError as exc:
+        # e.g. "No tariff logic found for sc_code=..."
+        raise HTTPException(status_code=422, detail=str(exc))
