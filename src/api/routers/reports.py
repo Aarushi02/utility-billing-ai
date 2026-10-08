@@ -76,7 +76,7 @@ def get_report_accounts() -> ReportAccountsResponse:
 
 @router.get("/grid")
 def get_override_grid(account_id: str | None = None, sc_code: str | None = None):
-    rows = service.load_override_grid(sc_code=sc_code)
+    rows = service.load_override_grid(sc_code=sc_code, account_id=account_id)
 
     bad_values = []
     for i, row in enumerate(rows):
@@ -118,7 +118,9 @@ def save_overrides(payload: ReportsSaveRequest):
         rows=[row.model_dump() for row in payload.rows],
     )
 
-    refreshed_rows = service.load_override_grid(sc_code=payload.sc_code)
+    refreshed_rows = service.load_override_grid(
+        sc_code=payload.sc_code, account_id=payload.account_id
+    )
 
     return {
         "saved": save_result,

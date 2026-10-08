@@ -80,12 +80,21 @@ class ReportService:
             return []
         return sorted(all_bills["bill_account"].dropna().astype(str).unique().tolist())
     
-    def load_override_grid(self, sc_code: str) -> list[dict]:
+    def load_override_grid(self, sc_code: str, account_id: str | None = None) -> list[dict]:
         df = fetch_user_bills()
         if df is None or df.empty:
             return []
 
         df = self._clean_columns(df)
+
+        if account_id:
+            if "bill_account" not in df.columns:
+                return []
+            df = df[
+                df["bill_account"].astype(str).str.strip() == str(account_id).strip()
+            ].copy()
+            if df.empty:
+                return []
 
         sc_column = self._resolve_service_class_column(df)
         if sc_column and sc_code:
